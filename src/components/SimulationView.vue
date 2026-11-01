@@ -298,20 +298,8 @@ watch(
 
 <template>
   <div class="layout">
-    <div class="stage"><canvas
-        ref="canvas"
-        class="view"
-        @pointerdown.prevent="onPointerDown"
-        @pointermove="onPointerMove"
-        @pointerup="onPointerUp"
-        @pointercancel="onPointerUp"
-        @contextmenu.prevent
-      /></div>
-    <aside class="panel">
+    <aside class="panel model-panel">
       <h1>PDE Patterns</h1>
-      <p v-if="error" class="error">{{ error }}</p>
-      <p v-else-if="notice" class="error">{{ notice }}</p>
-      <p v-else class="muted"><StatsReadout :stats="stats" kind="summary" :adapter="adapterLabel" /></p>
 
       <label>
         <span>equation</span>
@@ -340,11 +328,42 @@ watch(
         <input v-model.number="params[p.key]" type="range" :min="p.min" :max="p.max" :step="p.step" />
       </label>
 
-      <h2>Domain &amp; numerics</h2>
+      <h2>Domain</h2>
       <label>
-        <span>domain size L <output>{{ domain.toFixed(model.domain.step < 1 ? 1 : 0) }}</output></span>
+        <span>size L <output>{{ domain.toFixed(model.domain.step < 1 ? 1 : 0) }}</output></span>
         <input v-model.number="domain" type="range" :min="model.domain.min" :max="model.domain.max" :step="model.domain.step" />
       </label>
+      <label>
+        <span>grid points <output>dx = {{ (domain / gridSize).toPrecision(3) }}</output></span>
+        <select v-model.number="gridSize">
+          <option v-for="n in GRID_SIZES" :key="n" :value="n">{{ n }} × {{ n }}</option>
+        </select>
+      </label>
+
+      <div class="buttons end">
+        <button title="Forget the saved settings of this equation and use its defaults" @click="resetToDefaults">Reset to defaults</button>
+      </div>
+    </aside>
+
+    <div class="stage"><canvas
+        ref="canvas"
+        class="view"
+        @pointerdown.prevent="onPointerDown"
+        @pointermove="onPointerMove"
+        @pointerup="onPointerUp"
+        @pointercancel="onPointerUp"
+        @contextmenu.prevent
+      /></div>
+
+    <aside class="panel sim-panel">
+      <p v-if="error" class="error">{{ error }}</p>
+      <p v-else class="muted"><StatsReadout :stats="stats" kind="summary" :adapter="adapterLabel" /></p>
+      <div class="buttons">
+        <button @click="running = !running">{{ running ? 'Pause' : 'Run' }}</button>
+        <button @click="resetSimulation">Reset</button>
+      </div>
+
+      <h2>Time stepping</h2>
       <label>
         <span>dt <output>{{ dt.toFixed(2) }}</output></span>
         <input v-model.number="dt" type="range" :min="model.dt.min" :max="model.dt.max" :step="model.dt.step" />
@@ -370,13 +389,8 @@ watch(
         <span>steps / frame <output>{{ stepsPerFrame }}</output></span>
         <input v-model.number="stepsPerFrame" type="range" min="1" max="20" step="1" />
       </label>
-      <label>
-        <span>grid</span>
-        <select v-model.number="gridSize">
-          <option v-for="n in GRID_SIZES" :key="n" :value="n">{{ n }} × {{ n }}</option>
-        </select>
-        <small class="muted">dx = {{ (domain / gridSize).toPrecision(3) }}</small>
-      </label>
+
+      <h2>Display</h2>
       <label v-if="model.views.length > 1">
         <span>view</span>
         <select v-model.number="viewIndex">
@@ -400,21 +414,22 @@ watch(
         <input v-model.number="brushStrength" type="range" min="0.1" max="5" step="0.1" />
       </label>
       <p class="muted desc">Drag on the field: left button adds, right button subtracts.</p>
-
-      <div class="buttons">
-        <button @click="running = !running">{{ running ? 'Pause' : 'Run' }}</button>
-        <button @click="resetSimulation">Reset</button>
-        <button title="Forget the saved settings of this equation and use its defaults" @click="resetToDefaults">Reset to defaults</button>
-      </div>
     </aside>
   </div>
 </template>
 
 <style scoped>
-.layout { display: flex; height: 100vh; }
-.stage { flex: 1; min-width: 0; display: grid; place-items: center; background: #000; }
+.layout { display: grid; grid-template-columns: 280px minmax(0, 1fr) 280px; height: 100vh; }
+.stage { min-width: 0; display: grid; place-items: center; background: #000; }
 .view { width: min(100%, 100vh); aspect-ratio: 1; cursor: crosshair; touch-action: none; }
-.panel { width: 280px; padding: 16px; background: var(--panel); overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.panel { padding: 16px; background: var(--panel); overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+@media (max-width: 960px) {
+  /* narrow screens: the field on top, the two panels below */
+  .layout { grid-template-columns: 1fr; grid-template-rows: auto auto auto; height: auto; }
+  .stage { order: -1; }
+  .view { width: min(100%, 100vw); }
+  .panel { overflow-y: visible; }
+}
 h1 { font-size: 18px; margin: 0; }
 h2 { font-size: 13px; margin: 12px 0 0; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
 label { display: flex; flex-direction: column; gap: 4px; }
@@ -424,7 +439,8 @@ output { color: var(--muted); font-variant-numeric: tabular-nums; }
 select, button { background: #232734; color: var(--fg); border: 1px solid #333a4d; border-radius: 6px; padding: 6px 10px; }
 button { cursor: pointer; flex: 1; }
 button:hover { border-color: var(--accent); }
-.buttons { display: flex; gap: 8px; margin-top: 8px; }
+.buttons { display: flex; gap: 8px; }
+.buttons.end { margin-top: auto; padding-top: 8px; }
 .muted { color: var(--muted); margin: 0; }
 .desc { font-size: 12px; }
 .error { color: #ff7b7b; margin: 0; }
