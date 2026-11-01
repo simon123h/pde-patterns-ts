@@ -51,6 +51,11 @@ condition. **Painting:** drag on the field with the left mouse button to add a G
 with the right button to subtract one (brush size and strength are sliders; what is added to
 which field is defined per model, e.g. Gray–Scott adds `v` and removes `u`).
 
+**Saved settings:** the panel remembers the last equation, grid size, colormap and brush strength,
+and for every equation its parameters, domain size, dt, steps per frame, view, adaptive-dt settings and
+brush size, in the browser's `localStorage` (stale or invalid entries are clamped to the equation's
+ranges). *Reset to defaults* forgets the saved settings of the current equation.
+
 **Adaptive dt:** tick *adaptive dt* to let the solver choose the step size from an error
 tolerance (10⁻⁶ … 10⁻¹) up to a maximum dt; the dt slider then sets the starting value, and the
 panel shows the current dt and the accepted/rejected step counts. This pays off for Cahn–Hilliard
