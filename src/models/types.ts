@@ -52,6 +52,8 @@ export interface SpectralModel {
   /** One-line description shown in the UI. */
   description: string
   fields: number
+  /** Fields are genuinely complex-valued (e.g. CGLE); otherwise they are real and use real-to-complex FFTs. */
+  complex?: boolean
   params: ParamSpec[]
   domain: RangeSpec
   dt: RangeSpec

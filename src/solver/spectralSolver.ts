@@ -1,9 +1,11 @@
 import { Fft2D } from '../gpu/fft'
+import { RealFft2D } from '../gpu/realFft'
+import type { SpectralTransform } from '../gpu/transform'
 import type { SpectralModel } from '../models/types'
 import combineWgsl from './shaders/combine.wgsl?raw'
 import gradientWgsl from './shaders/gradient.wgsl?raw'
 import paintWgsl from './shaders/paint.wgsl?raw'
-import { buildCoefficients, COEFFICIENT_PLANES, type GridSpec } from './coefficients'
+import { buildCoefficients, COEFFICIENT_PLANES, spectralModes, type GridSpec } from './coefficients'
 import { nonlinearShader } from './nonlinearShader'
 
 const WORKGROUP = 256
@@ -15,12 +17,20 @@ const UNIFORM = GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
 /**
  * Pseudospectral solver for ∂t û = L û + M·FFT[N(u)] on a periodic square nx × ny grid,
  * advanced with the Krogstad ETDRK4 scheme entirely on the GPU. Fields are stored back to back
- * (field f at element offset f·nx·ny) as complex numbers; spectral buffers use the transposed
- * layout of `Fft2D`.
+ * (field f at element offset f·nx·ny). Real models keep physical fields as plain f32 and use
+ * real-to-complex FFTs (half spectrum kx ≤ nx/2); complex models (CGLE) use vec2<f32> fields and
+ * full complex FFTs. Spectral buffers always use the transposed layout (index kx·ny + ky).
  */
 export class SpectralSolver {
+  /** Grid cells per field. */
   readonly cells: number
+  /** Physical values: fields · cells. */
   readonly total: number
+  /** Whether the fields are stored as real f32 (otherwise complex vec2<f32>). */
+  readonly real: boolean
+  /** Spectral modes per field, and over all fields. */
+  readonly modes: number
+  readonly spectralTotal: number
   /** Simulated time. */
   time = 0
 
@@ -29,7 +39,7 @@ export class SpectralSolver {
   private h: number
   private coefficientsDirty = true
 
-  private readonly fft: Fft2D
+  private readonly fft: SpectralTransform
   private readonly physBuffer: GPUBuffer
   private readonly physN: GPUBuffer
   private readonly uHat: GPUBuffer
@@ -62,20 +72,26 @@ export class SpectralSolver {
     gridSpec: GridSpec,
   ) {
     this.grid = { ...gridSpec }
+    this.real = !model.complex
     this.cells = gridSpec.nx * gridSpec.ny
     this.total = this.cells * model.fields
-    const bytes = this.total * 8
-    const coefBytes = COEFFICIENT_PLANES * bytes
+    this.modes = spectralModes(model, gridSpec)
+    this.spectralTotal = this.modes * model.fields
+    const physBytes = this.total * (this.real ? 4 : 8)
+    const specBytes = this.spectralTotal * 8
+    const coefBytes = COEFFICIENT_PLANES * specBytes
     if (coefBytes > device.limits.maxStorageBufferBindingSize) {
       throw new Error(`Grid ${gridSpec.nx}×${gridSpec.ny} with ${model.fields} field(s) exceeds the device buffer limit`)
     }
-    if (Math.ceil(this.total / WORKGROUP) > device.limits.maxComputeWorkgroupsPerDimension) {
+    if (Math.ceil(this.spectralTotal / WORKGROUP) > device.limits.maxComputeWorkgroupsPerDimension) {
       throw new Error('Grid too large for a single-dimension dispatch')
     }
 
     this.params = Object.fromEntries(model.params.map((p) => [p.key, p.default]))
     this.h = model.dt.default
-    this.fft = new Fft2D(device, gridSpec.nx, gridSpec.ny, model.fields)
+    this.fft = this.real
+      ? new RealFft2D(device, gridSpec.nx, gridSpec.ny, model.fields)
+      : new Fft2D(device, gridSpec.nx, gridSpec.ny, model.fields)
 
     const buffer = (size: number, usage: number) => {
       const b = device.createBuffer({ size, usage })
@@ -93,11 +109,11 @@ export class SpectralSolver {
         entries: buffers.map((b, binding) => ({ binding, resource: { buffer: b } })),
       })
 
-    this.physBuffer = buffer(bytes, STORAGE)
-    this.physN = buffer(bytes, STORAGE)
-    this.uHat = buffer(bytes, STORAGE)
-    this.stageState = buffer(bytes, STORAGE)
-    this.nHat = [0, 1, 2, 3].map(() => buffer(bytes, STORAGE))
+    this.physBuffer = buffer(physBytes, STORAGE)
+    this.physN = buffer(physBytes, STORAGE)
+    this.uHat = buffer(specBytes, STORAGE)
+    this.stageState = buffer(specBytes, STORAGE)
+    this.nHat = [0, 1, 2, 3].map(() => buffer(specBytes, STORAGE))
     this.coef = buffer(coefBytes, STORAGE)
     this.paramBuffer = buffer(Math.ceil((model.params.length + 1) / 4) * 16, UNIFORM)
 
@@ -106,10 +122,10 @@ export class SpectralSolver {
     if (model.usesGradient) {
       const gradientPipeline = pipeline(gradientWgsl)
       const uniform = buffer(32, UNIFORM)
-      const xHat = buffer(bytes, STORAGE)
-      const yHat = buffer(bytes, STORAGE)
-      const xPhys = buffer(bytes, STORAGE)
-      const yPhys = buffer(bytes, STORAGE)
+      const xHat = buffer(specBytes, STORAGE)
+      const yHat = buffer(specBytes, STORAGE)
+      const xPhys = buffer(physBytes, STORAGE)
+      const yPhys = buffer(physBytes, STORAGE)
       this.gradient = {
         pipeline: gradientPipeline,
         uniform,
@@ -127,7 +143,7 @@ export class SpectralSolver {
     this.combinePipeline = pipeline(combineWgsl)
     this.combineBinds = [0, 1, 2, 3].map((stage) => {
       const stageParams = buffer(16, UNIFORM)
-      device.queue.writeBuffer(stageParams, 0, new Uint32Array([stage, this.total, 0, 0]))
+      device.queue.writeBuffer(stageParams, 0, new Uint32Array([stage, this.spectralTotal, 0, 0]))
       return bind(this.combinePipeline, [stageParams, this.coef, this.uHat, ...this.nHat, this.stageState])
     })
 
@@ -179,21 +195,48 @@ export class SpectralSolver {
    * may be real-valued (length fields·cells) or interleaved re/im (length 2·fields·cells).
    */
   reset(initial?: Float32Array): void {
-    let data: Float32Array<ArrayBuffer>
+    // normalize to interleaved (re, im)
+    let data: Float32Array
     if (!initial) {
-      data = this.model.initial({ nx: this.grid.nx, ny: this.grid.ny, lx: this.domain, params: this.params }) as Float32Array<ArrayBuffer>
+      data = this.model.initial({ nx: this.grid.nx, ny: this.grid.ny, lx: this.domain, params: this.params })
     } else if (initial.length === this.total) {
       data = new Float32Array(2 * this.total)
       for (let i = 0; i < this.total; i++) data[2 * i] = initial[i]!
     } else {
-      data = new Float32Array(initial)
+      data = initial
     }
     if (data.length !== 2 * this.total) throw new Error('Initial state has the wrong size')
-    this.device.queue.writeBuffer(this.physBuffer, 0, data)
+
+    let upload: Float32Array<ArrayBuffer>
+    if (this.real) {
+      upload = new Float32Array(this.total)
+      for (let i = 0; i < this.total; i++) upload[i] = data[2 * i]!
+    } else {
+      upload = new Float32Array(data)
+    }
+    this.device.queue.writeBuffer(this.physBuffer, 0, upload)
     const enc = this.device.createCommandEncoder()
     this.fft.forward(enc, this.physBuffer, this.uHat)
     this.device.queue.submit([enc.finish()])
     this.time = 0
+  }
+
+  /** Read the current physical-space fields back as interleaved (re, im), fields back to back. */
+  async readPhysical(): Promise<Float32Array> {
+    const bytes = this.total * (this.real ? 4 : 8)
+    const staging = this.device.createBuffer({ size: bytes, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ })
+    const enc = this.device.createCommandEncoder()
+    this.encodeView(enc)
+    enc.copyBufferToBuffer(this.physBuffer, 0, staging, 0, bytes)
+    this.device.queue.submit([enc.finish()])
+    await staging.mapAsync(GPUMapMode.READ)
+    const raw = new Float32Array(staging.getMappedRange().slice(0))
+    staging.unmap()
+    staging.destroy()
+    if (!this.real) return raw
+    const out = new Float32Array(2 * this.total)
+    for (let i = 0; i < this.total; i++) out[2 * i] = raw[i]!
+    return out
   }
 
   /** Encode `count` ETDRK4 steps. Must be submitted before the next call that changes dt or params. */
@@ -204,15 +247,15 @@ export class SpectralSolver {
       for (let stage = 0; stage < 4; stage++) {
         this.fft.inverse(encoder, stage === 0 ? this.uHat : this.stageState, this.physBuffer)
         if (g) {
-          this.dispatch(encoder, g.pipeline, g.binds[stage === 0 ? 0 : 1]!)
+          this.dispatch(encoder, g.pipeline, g.binds[stage === 0 ? 0 : 1]!, this.spectralTotal)
           this.fft.inverse(encoder, g.xHat, g.xPhys)
           this.fft.inverse(encoder, g.yHat, g.yPhys)
         }
-        this.dispatch(encoder, this.nonlinearPipeline, this.nonlinearBind)
+        this.dispatch(encoder, this.nonlinearPipeline, this.nonlinearBind, this.cells)
         this.fft.forward(encoder, this.physN, this.nHat[stage]!)
-        this.dispatch(encoder, this.combinePipeline, this.combineBinds[stage]!)
+        this.dispatch(encoder, this.combinePipeline, this.combineBinds[stage]!, this.spectralTotal)
       }
-      encoder.copyBufferToBuffer(this.stageState, 0, this.uHat, 0, this.total * 8)
+      encoder.copyBufferToBuffer(this.stageState, 0, this.uHat, 0, this.spectralTotal * 8)
       this.time += this.h
     }
   }
@@ -230,14 +273,14 @@ export class SpectralSolver {
     view.setUint32(0, count, true)
     view.setUint32(4, this.grid.nx, true)
     view.setUint32(8, this.grid.ny, true)
-    view.setUint32(12, this.cells, true)
-    view.setUint32(16, this.total, true)
+    view.setUint32(12, this.modes, true)
+    view.setUint32(16, this.spectralTotal, true)
     view.setFloat32(20, sigma, true)
     view.setFloat32(24, this.grid.dx, true)
     for (let f = 0; f < 4; f++) view.setFloat32(32 + 4 * f, amounts[f] ?? 0, true)
     this.device.queue.writeBuffer(this.paintUniform, 0, view.buffer)
     this.device.queue.writeBuffer(this.stampBuffer, 0, stamps, 0, count * 4)
-    this.dispatch(encoder, this.paintPipeline, this.paintBind)
+    this.dispatch(encoder, this.paintPipeline, this.paintBind, this.spectralTotal)
   }
 
   /** Transform the current state to physical space into `physical`. */
@@ -250,11 +293,11 @@ export class SpectralSolver {
     for (const b of this.owned) b.destroy()
   }
 
-  private dispatch(encoder: GPUCommandEncoder, pipeline: GPUComputePipeline, bind: GPUBindGroup): void {
+  private dispatch(encoder: GPUCommandEncoder, pipeline: GPUComputePipeline, bind: GPUBindGroup, threads: number): void {
     const pass = encoder.beginComputePass()
     pass.setPipeline(pipeline)
     pass.setBindGroup(0, bind)
-    pass.dispatchWorkgroups(Math.ceil(this.total / WORKGROUP))
+    pass.dispatchWorkgroups(Math.ceil(threads / WORKGROUP))
     pass.end()
   }
 
@@ -271,8 +314,8 @@ export class SpectralSolver {
     const view = new DataView(new ArrayBuffer(32))
     view.setUint32(0, this.grid.nx, true)
     view.setUint32(4, this.grid.ny, true)
-    view.setUint32(8, this.cells, true)
-    view.setUint32(12, this.total, true)
+    view.setUint32(8, this.modes, true)
+    view.setUint32(12, this.spectralTotal, true)
     view.setFloat32(16, this.grid.dx, true)
     this.device.queue.writeBuffer(this.gradient.uniform, 0, view.buffer)
   }

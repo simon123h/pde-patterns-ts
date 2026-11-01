@@ -7,6 +7,7 @@ export const ginzburgLandau: SpectralModel = {
   name: 'Complex Ginzburg–Landau',
   description: '∂t A = A + (1+iα)∇²A − (1+iβ)|A|²A — spirals, defect turbulence and phase turbulence (Benjamin–Feir unstable for 1+αβ < 0).',
   fields: 1,
+  complex: true,
   params: [
     { key: 'alpha', label: 'α (dispersion)', min: -4, max: 4, step: 0.01, default: 1.5 },
     { key: 'beta', label: 'β (nonlinear frequency)', min: -4, max: 4, step: 0.01, default: -1.5 },

@@ -2,16 +2,19 @@ import type { SpectralModel } from '../models/types'
 
 /** Generates the pointwise-nonlinearity kernel: physN[f] = N_f(phys, ∇phys) for all fields. */
 export function nonlinearShader(model: SpectralModel, cells: number, nx: number): string {
+  const real = !model.complex
+  const T = real ? 'f32' : 'vec2<f32>'
+  const load = (expr: string) => (real ? `vec2<f32>(${expr}, 0.0)` : expr)
   const fields = model.fields
   // the grid spacing is appended after the model parameters
   const struct = [...model.params.map((p) => p.key), 'dx'].map((key) => `  ${key}: f32,`).join('\n')
   const gradientBindings = model.usesGradient
-    ? `@group(0) @binding(3) var<storage, read> physGx: array<vec2<f32>>;
-@group(0) @binding(4) var<storage, read> physGy: array<vec2<f32>>;`
+    ? `@group(0) @binding(3) var<storage, read> physGx: array<${T}>;
+@group(0) @binding(4) var<storage, read> physGy: array<${T}>;`
     : ''
   const gradientLoad = model.usesGradient
-    ? `ux[f] = physGx[f * CELLS + i];
-    uy[f] = physGy[f * CELLS + i];`
+    ? `ux[f] = ${load('physGx[f * CELLS + i]')};
+    uy[f] = ${load('physGy[f * CELLS + i]')};`
     : ''
   return /* wgsl */ `
 struct Params {
@@ -19,8 +22,8 @@ ${struct}
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
-@group(0) @binding(1) var<storage, read> phys: array<vec2<f32>>;
-@group(0) @binding(2) var<storage, read_write> physN: array<vec2<f32>>;
+@group(0) @binding(1) var<storage, read> phys: array<${T}>;
+@group(0) @binding(2) var<storage, read_write> physN: array<${T}>;
 ${gradientBindings}
 
 const NF: u32 = ${fields}u;
@@ -43,11 +46,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   var ux: array<vec2<f32>, ${fields}>;
   var uy: array<vec2<f32>, ${fields}>;
   for (var f = 0u; f < NF; f++) {
-    u[f] = phys[f * CELLS + i];
+    u[f] = ${load('phys[f * CELLS + i]')};
     ${gradientLoad}
   }
   for (var f = 0u; f < NF; f++) {
-    physN[f * CELLS + i] = nonlinear(u, ux, uy, xy, f);
+    physN[f * CELLS + i] = nonlinear(u, ux, uy, xy, f)${real ? '.x' : ''};
   }
 }
 `

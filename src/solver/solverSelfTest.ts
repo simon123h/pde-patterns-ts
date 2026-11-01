@@ -14,20 +14,6 @@ const N = 32
 const LENGTH = 4 * Math.PI
 const GRID = { nx: N, ny: N, dx: LENGTH / N }
 
-async function readPhysicalOf(device: GPUDevice, solver: SpectralSolver): Promise<Float32Array> {
-  const bytes = solver.total * 8
-  const staging = device.createBuffer({ size: bytes, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ })
-  const enc = device.createCommandEncoder()
-  solver.encodeView(enc)
-  enc.copyBufferToBuffer(solver.physical, 0, staging, 0, bytes)
-  device.queue.submit([enc.finish()])
-  await staging.mapAsync(GPUMapMode.READ)
-  const data = new Float32Array(staging.getMappedRange().slice(0))
-  staging.unmap()
-  staging.destroy()
-  return data
-}
-
 /** Interleaved (re, im) of all fields in physical space after running `steps` steps of size h. */
 async function run(
   device: GPUDevice,
@@ -48,16 +34,7 @@ async function run(
     device.queue.submit([enc.finish()])
     await device.queue.onSubmittedWorkDone()
   }
-  const bytes = solver.total * 8
-  const staging = device.createBuffer({ size: bytes, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ })
-  const enc = device.createCommandEncoder()
-  solver.encodeView(enc)
-  enc.copyBufferToBuffer(solver.physical, 0, staging, 0, bytes)
-  device.queue.submit([enc.finish()])
-  await staging.mapAsync(GPUMapMode.READ)
-  const data = new Float32Array(staging.getMappedRange().slice(0))
-  staging.unmap()
-  staging.destroy()
+  const data = await solver.readPhysical()
   const time = solver.time
   solver.destroy()
   return { data, time }
@@ -113,7 +90,7 @@ export async function runSolverSelfTest(log: (line: string) => void): Promise<bo
     const enc = device.createCommandEncoder()
     solver.paint(enc, new Float32Array([LENGTH / 2, LENGTH / 2, 2, 0]), sigma) // scale 2 × amount 0.5
     device.queue.submit([enc.finish()])
-    const data = await readPhysicalOf(device, solver)
+    const data = await solver.readPhysical()
     solver.destroy()
     let peak = -Infinity
     let at = 0

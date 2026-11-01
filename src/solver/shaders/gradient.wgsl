@@ -3,7 +3,7 @@
 struct Params {
   nx: u32,
   ny: u32,
-  cells: u32,
+  modes: u32, // spectral modes per field
   total: u32,
   dx: f32,
   pad0: u32,
@@ -35,7 +35,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (g >= p.total) {
     return;
   }
-  let r = g % p.cells;
+  let r = g % p.modes;
   // spectral layout is transposed: index = kx * ny + ky
   let kx = wavenumber(r / p.ny, p.nx, p.dx);
   let ky = wavenumber(r % p.ny, p.ny, p.dx);
