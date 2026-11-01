@@ -18,10 +18,14 @@ the full browser suite locally by default.
 Run a single browser page locally only when you changed the code it covers:
 - `fft` for `src/gpu/` (FFT, transpose, real-to-complex)
 - `render` for `src/render/`
-- `solver` for `src/solver/` (time stepping, coefficients, adaptive dt, shaders). Appending
-  `?only=coef` to the solver-test page URL runs just the coefficient comparison.
+- `solver` for `src/solver/` (time stepping, coefficients, adaptive dt, shaders). The full page takes
+  over 10 minutes, so run one group instead: `node scripts/browser-tests.mjs solver:<group>`, where
+  the group is a model id (`cgle`, `thin-film`, `swift-hohenberg`, ...: that model's checks and its
+  smoke test, about a minute), `coef` (GPU vs CPU coefficients), `adaptive`, `thin` (thin-film checks
+  only) or `models` (the smoke test of every model). The log shows how long each section took.
 
-Changes to models, parameters, UI or docs only need `npm run check`; the model smoke tests in
+A new or changed model needs `npm run check` and, if you changed its nonlinearity or symbols,
+`solver:<its id>`. Changes to parameters, UI or docs only need `npm run check`; the model smoke tests in
 `tests/models.test.ts` cover every registered model automatically. Wrong numbers in a GPU kernel
 often still give a plausible picture, so do run the matching page after touching a kernel.
 
