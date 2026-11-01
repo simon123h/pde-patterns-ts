@@ -30,7 +30,8 @@ const brushSize = ref(3) // percent of the domain length
 const brushStrength = ref(1)
 const running = ref(true)
 const params = reactive<Record<string, number>>({})
-const stats = reactive({ fps: 0, time: 0, dt: 0, accepted: 0, rejected: 0 })
+const stats = reactive({ fps: 0, time: 0, dt: 0, accepted: 0, rejected: 0, recoveries: 0 })
+const notice = ref('')
 // updated every frame, copied into `stats` a few times per second. Only <StatsReadout> reads `stats`:
 // re-rendering the whole panel made the highlight in the native equation dropdown flicker in Firefox
 let liveFps = 0
@@ -38,6 +39,8 @@ let liveTime = 0
 let liveDt = 0
 let liveAccepted = 0
 let liveRejected = 0
+let liveRecoveries = 0
+let seenRecoveries = 0
 let statsTimer = 0
 
 let device: GPUDevice | null = null
@@ -78,6 +81,8 @@ function selectModel(id: string) {
 }
 
 function build() {
+  notice.value = ''
+  seenRecoveries = 0
   if (!device || !canvas.value) return
   solver?.destroy()
   renderer?.destroy()
@@ -101,6 +106,8 @@ function applyAdaptive() {
 }
 
 function resetSimulation() {
+  if (notice.value) running.value = true
+  notice.value = ''
   solver?.reset()
   renderer?.resetRange()
 }
@@ -167,6 +174,7 @@ function frame(now: number) {
   solver.encodeView(enc)
   const view = model.value.views[viewIndex.value] ?? model.value.views[0]!
   renderer.render(enc, view.field, view.kind, colormap.value)
+  solver.encodeHealthCheck(enc)
   solver.encodeStatsCopy(enc)
   device.queue.submit([enc.finish()])
   void solver.afterSubmit()
@@ -179,6 +187,16 @@ function frame(now: number) {
   liveDt = solver.dt
   liveAccepted = solver.stats.accepted
   liveRejected = solver.stats.rejected
+  liveRecoveries = solver.recoveries
+  if (solver.unstable && running.value) {
+    running.value = false
+    notice.value = `The simulation keeps blowing up even with dt = ${solver.dt.toPrecision(2)}. Try a smaller dt, other parameters or reset.`
+  }
+  if (liveRecoveries !== seenRecoveries) {
+    // the solver halved dt: show the value it uses now
+    seenRecoveries = liveRecoveries
+    dt.value = solver.dt
+  }
 }
 
 onMounted(async () => {
@@ -197,6 +215,7 @@ onMounted(async () => {
       stats.dt = liveDt
       stats.accepted = liveAccepted
       stats.rejected = liveRejected
+      stats.recoveries = liveRecoveries
     }, 250)
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
@@ -236,6 +255,7 @@ watch(
     <aside class="panel">
       <h1>PDE Patterns</h1>
       <p v-if="error" class="error">{{ error }}</p>
+      <p v-else-if="notice" class="error">{{ notice }}</p>
       <p v-else class="muted"><StatsReadout :stats="stats" kind="summary" :adapter="adapterLabel" /></p>
 
       <label>
