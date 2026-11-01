@@ -130,3 +130,22 @@ export function buildPaletteTable(): Float32Array<ArrayBuffer> {
   })
   return table
 }
+
+/**
+ * CSS gradient (bottom to top) of a colormap, for a color bar. The stops of a map are evenly spaced, as in the
+ * palette table; the phase view uses the cyclic palette of the render shader instead.
+ */
+export function gradientCss(colormap: string, cyclic: boolean): string {
+  if (cyclic) {
+    const colors = Array.from({ length: 25 }, (_, i) => {
+      const t = i / 24
+      const c = [0, 0.33333, 0.66667].map((phase) => Math.round(255 * (0.5 + 0.5 * Math.cos(2 * Math.PI * (t + phase)))))
+      return `rgb(${c.join(',')}) ${(t * 100).toFixed(1)}%`
+    })
+    return `linear-gradient(to top, ${colors.join(', ')})`
+  }
+  const map = COLORMAPS.find((m) => m.id === colormap) ?? COLORMAPS[0]!
+  const n = map.stops.length - 1
+  const colors = map.stops.map((c, i) => `rgb(${c.map(Math.round).join(',')}) ${((i / n) * 100).toFixed(1)}%`)
+  return `linear-gradient(to top, ${colors.join(', ')})`
+}

@@ -10,9 +10,9 @@ struct Params {
   kind: u32, // 0 Re, 1 Im, 2 |.|, 3 arg
   diverging: u32, // 1: symmetric range centered on zero
   real: u32, // 1: field is plain f32 instead of interleaved complex
-  pad2: u32,
-  pad3: u32,
-  pad4: u32,
+  manual: u32, // 1: use lo/hi instead of the automatic range
+  lo: f32,
+  hi: f32,
 }
 
 @group(0) @binding(0) var<uniform> p: Params;
@@ -75,6 +75,10 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
   ));
   var lo = range[0];
   var hi = range[1];
+  if (p.manual == 1u) {
+    lo = p.lo;
+    hi = p.hi;
+  }
   if (p.kind == 3u) {
     lo = -3.14159265;
     hi = 3.14159265;

@@ -9,6 +9,7 @@ async function renderPixels(
   kind: 're' | 'im' | 'abs' | 'arg',
   colormap: string,
   real = false,
+  limits: { lo: number; hi: number } | null = null,
 ): Promise<Uint8Array> {
   const field = device.createBuffer({ size: data.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST })
   device.queue.writeBuffer(field, 0, data)
@@ -20,7 +21,7 @@ async function renderPixels(
   const renderer = new FieldRenderer(device, texture, field, N, N, real)
   const staging = device.createBuffer({ size: N * N * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ })
   const enc = device.createCommandEncoder()
-  renderer.render(enc, 0, kind, colormap)
+  renderer.render(enc, 0, kind, colormap, limits)
   enc.copyTextureToBuffer({ texture }, { buffer: staging, bytesPerRow: N * 4 }, [N, N])
   device.queue.submit([enc.finish()])
   await staging.mapAsync(GPUMapMode.READ)
@@ -30,6 +31,22 @@ async function renderPixels(
   texture.destroy()
   renderer.destroy()
   return pixels
+}
+
+/** The automatic color range the renderer reports for `data` after drawing it once. */
+async function readRange(device: GPUDevice, data: Float32Array<ArrayBuffer>): Promise<{ lo: number; hi: number } | null> {
+  const field = device.createBuffer({ size: data.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST })
+  device.queue.writeBuffer(field, 0, data)
+  const texture = device.createTexture({ size: [N, N], format: 'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT })
+  const renderer = new FieldRenderer(device, texture, field, N, N)
+  const enc = device.createCommandEncoder()
+  renderer.render(enc, 0, 're', 'viridis')
+  device.queue.submit([enc.finish()])
+  const range = await renderer.readRange()
+  field.destroy()
+  texture.destroy()
+  renderer.destroy()
+  return range
 }
 
 /** Interleaved complex field whose real part follows `f(x)` (constant in y). */
@@ -71,6 +88,16 @@ export async function runRenderSelfTest(log: (line: string) => void): Promise<bo
   px = await renderPixels(device, ramp((x) => x / (N - 1)), 're', 'rdbu')
   expect('diverging centered on zero (value 0)', px, 0, [247, 247, 247])
   expect('diverging centered on zero (max)', px, N - 1, [103, 0, 31])
+
+  // fixed limits: the ramp 0…1 on the range [0, 2] only reaches the middle of the colormap
+  px = await renderPixels(device, ramp((x) => x / (N - 1)), 're', 'viridis', false, { lo: 0, hi: 2 })
+  expect('manual limits [0, 2]: value 0', px, 0, [68, 1, 84], 6)
+  expect('manual limits [0, 2]: value 1 is mid-map', px, N - 1, [33, 145, 140], 8)
+  // and the automatic range can be read back for the color bar
+  const range = await readRange(device, up)
+  const rangeOk = range !== null && Math.abs(range.lo + 1) < 1e-5 && Math.abs(range.hi - 1) < 1e-5
+  ok &&= rangeOk
+  log(`${rangeOk ? 'PASS' : 'FAIL'} automatic range read back: ${range ? `[${range.lo}, ${range.hi}]` : 'null'}, want [-1, 1]`)
 
   px = await renderPixels(device, up, 're', 'gray')
   expect('gray low', px, 0, [0, 0, 0])
