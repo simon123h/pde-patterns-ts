@@ -6,6 +6,7 @@ import type { SpectralModel } from '../models/types'
 import { COLORMAPS } from '../render/colormaps'
 import { FieldRenderer } from '../render/fieldRenderer'
 import { MAX_STAMPS, SpectralSolver } from '../solver/spectralSolver'
+import StatsReadout from './StatsReadout.vue'
 
 const GRID_SIZES = [64, 128, 256, 512, 1024]
 
@@ -30,8 +31,8 @@ const brushStrength = ref(1)
 const running = ref(true)
 const params = reactive<Record<string, number>>({})
 const stats = reactive({ fps: 0, time: 0, dt: 0, accepted: 0, rejected: 0 })
-// updated every frame, copied into `stats` a few times per second: re-rendering the whole panel
-// at 60 Hz made native controls (the equation dropdown in particular) flicker and close
+// updated every frame, copied into `stats` a few times per second. Only <StatsReadout> reads `stats`:
+// re-rendering the whole panel made the highlight in the native equation dropdown flicker in Firefox
 let liveFps = 0
 let liveTime = 0
 let liveDt = 0
@@ -235,7 +236,7 @@ watch(
     <aside class="panel">
       <h1>PDE Patterns</h1>
       <p v-if="error" class="error">{{ error }}</p>
-      <p v-else class="muted">{{ adapterLabel || 'WebGPU' }} · {{ stats.fps.toFixed(0) }} fps · t = {{ stats.time.toFixed(1) }}</p>
+      <p v-else class="muted"><StatsReadout :stats="stats" kind="summary" :adapter="adapterLabel" /></p>
 
       <label>
         <span>equation</span>
@@ -287,7 +288,7 @@ watch(
           <input v-model.number="maxDt" type="range" :min="model.dt.min" :max="model.dt.max * 20" :step="model.dt.step" />
         </label>
         <p class="muted desc">
-          current dt = {{ stats.dt.toPrecision(3) }} · accepted {{ stats.accepted }} · rejected {{ stats.rejected }}
+          <StatsReadout :stats="stats" kind="adaptive" />
         </p>
       </template>
       <label>
