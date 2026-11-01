@@ -4,6 +4,9 @@ Real-time simulation of pattern-forming PDEs in two space dimensions, running en
 browser on the GPU (WebGPU). Pseudospectral discretization on a periodic domain, exponential
 time integration (ETDRK4), written in TypeScript with a Vue 3 front end.
 
+**Try it: <https://simon123h.github.io/pde-patterns-ts/>** (needs a WebGPU browser, see Requirements). The
+self-test pages are deployed with it, e.g. `/fft-test.html`, to check your own GPU.
+
 ## Equations
 
 | Model | Equation | Notes |
@@ -36,7 +39,7 @@ The page must be served from a secure context (`http://localhost` is fine).
 ```bash
 npm install
 npm run dev        # http://localhost:5173
-npm run build      # typecheck + production build
+npm run build      # typecheck + production build (BASE_PATH=/sub/path/ for a sub-directory)
 npm test           # CPU unit tests (Vitest)
 ```
 
