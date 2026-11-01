@@ -1,3 +1,4 @@
+import type { SpectralTransform } from './transform'
 import rowFftWgsl from './shaders/rowFft.wgsl?raw'
 import transposeWgsl from './shaders/transpose.wgsl?raw'
 
@@ -24,7 +25,10 @@ interface Pass {
  * `inverse` includes the 1/(nx·ny) normalization. `src` and `dst` must be different buffers
  * (both need STORAGE usage); `src` is left untouched.
  */
-export class Fft2D {
+export class Fft2D implements SpectralTransform {
+  /** Spectral modes per field. */
+  readonly modes: number
+
   private readonly rowPipeline: GPUComputePipeline
   private readonly transposePipeline: GPUComputePipeline
   private readonly scratch: GPUBuffer
@@ -40,6 +44,7 @@ export class Fft2D {
     /** Number of independent nx × ny fields stored back to back in each buffer. */
     readonly batch = 1,
   ) {
+    this.modes = nx * ny
     const maxLen = Math.min(MAX_ROW_LENGTH, device.limits.maxComputeWorkgroupStorageSize / 8)
     for (const n of [nx, ny]) {
       if (n < 2 || (n & (n - 1)) !== 0) throw new Error(`FFT size ${n} must be a power of two ≥ 2`)
