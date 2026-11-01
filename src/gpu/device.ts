@@ -9,7 +9,10 @@ export async function requestGpu(): Promise<GpuContext> {
   if (!('gpu' in navigator)) {
     throw new WebGpuUnavailableError(`WebGPU is not available (secure context: ${window.isSecureContext}). On Linux it must be enabled manually: Chrome needs --enable-unsafe-webgpu --enable-features=Vulkan; Firefox needs dom.webgpu.enabled in about:config.`)
   }
-  const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' })
+  // Some Linux setups (integrated GPU only) return null when a power preference is given.
+  const adapter =
+    (await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' })) ??
+    (await navigator.gpu.requestAdapter())
   if (!adapter) throw new WebGpuUnavailableError('WebGPU exists but no adapter was returned. On Linux, Chrome usually needs --enable-features=Vulkan (and --ozone-platform=x11 may help); check chrome://gpu.')
   const device = await adapter.requestDevice({
     requiredLimits: {
