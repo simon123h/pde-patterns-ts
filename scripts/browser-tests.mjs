@@ -41,6 +41,10 @@ const chrome = spawn(process.env.CHROME ?? 'google-chrome', [
 ], { stdio: 'ignore' })
 
 let failed = false
+// a killed run (timeout, ctrl-c) must not leave chrome or the dev server behind
+const abort = () => { chrome.kill('SIGKILL'); process.exit(130) }
+process.on('SIGTERM', abort)
+process.on('SIGINT', abort)
 try {
   for (let i = 0; ; i++) {
     try { await devtools('/json/version'); break } catch { if (i > 50) throw new Error('chrome did not start'); await sleep(200) }

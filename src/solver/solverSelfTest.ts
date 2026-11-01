@@ -3,6 +3,7 @@ import { advectionDiffusion } from '../models/advectionDiffusion'
 import { brusselator } from '../models/brusselator'
 import { cahnHilliard } from '../models/cahnHilliard'
 import { ginzburgLandau } from '../models/ginzburgLandau'
+import { models } from '../models'
 import { kuramotoSivashinsky } from '../models/kuramotoSivashinsky'
 import { nikolaevskiy } from '../models/nikolaevskiy'
 import { swiftHohenberg } from '../models/swiftHohenberg'
@@ -293,6 +294,29 @@ export async function runSolverSelfTest(log: (line: string) => void): Promise<bo
     const r = 0.05
     const { data } = await run(device, swiftHohenberg, stripes(2, 0.05), { r, g: 0 }, 2, 150)
     check('SH stripe saturation amplitude sqrt(4r/3)', stripeAmplitude(data, 2), Math.sqrt((4 * r) / 3), 0.03)
+  }
+  // Every registered model runs from its own initial state with its defaults and presets
+  for (const model of models) {
+    const settings = [{ name: 'defaults', preset: {} as { params?: Record<string, number>; domain?: number; dt?: number } }]
+    for (const preset of model.presets ?? []) settings.push({ name: `preset "${preset.name}"`, preset })
+    const solver = new SpectralSolver(device, model, { nx: N, ny: N, dx: model.domain.default / N }) // one solver: pipelines are slow to build
+    for (const { name, preset } of settings) {
+      const domain = preset.domain ?? model.domain.default
+      solver.setParams({ ...Object.fromEntries(model.params.map((p) => [p.key, p.default])), ...preset.params })
+      solver.setDomain(domain)
+      solver.setDt(preset.dt ?? model.dt.default)
+      solver.reset()
+      const enc = device.createCommandEncoder()
+      solver.step(enc, 30)
+      device.queue.submit([enc.finish()])
+      await device.queue.onSubmittedWorkDone()
+      const data = await solver.readPhysical()
+      const peak = data.reduce((m, v) => Math.max(m, Math.abs(v)), 0)
+      const pass = Number.isFinite(peak) && peak < 1e3
+      ok &&= pass
+      log(`${pass ? 'PASS' : 'FAIL'} ${model.name}, ${name}: 30 steps stay finite (max |u| = ${peak.toPrecision(3)})`)
+    }
+    solver.destroy()
   }
   return ok
 }
