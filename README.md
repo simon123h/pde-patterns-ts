@@ -91,8 +91,10 @@ lines and ends with `ALL PASSED`:
   fields are plain `f32` buffers. Complex fields use full complex transforms.
 - **Adaptive time stepping**: the 4th-order ETDRK4 result is compared with the (2nd-order) third
   stage; their difference estimates the local error (∝ h³). A one-workgroup GPU kernel reduces the
-  per-workgroup error sums, accepts or rejects the step, picks the next h (safety factor 0.9, growth
-  limited to 2×) and a commit kernel applies the new state only if accepted. The ETD coefficients
+  per-workgroup error sums, accepts or rejects the step, picks the next h with a PI controller
+  (factor = 0.9·e^(−0.7/3)·e₋^(0.4/3) with e = error/tolerance and e₋ the ratio of the previous
+  accepted step, growth limited to 2×; a rejected step is retried with the plain exponent −1/3) and
+  a commit kernel applies the new state only if accepted. The ETD coefficients
   for the new h are then recomputed on the GPU (f32, own `sincos` for accurate phases) through an
   indirect dispatch that is skipped while h is unchanged. No CPU round trip is involved in the
   loop; only the statistics are read back asynchronously for display.

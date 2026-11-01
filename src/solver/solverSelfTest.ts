@@ -362,6 +362,16 @@ export async function runSolverSelfTest(log: (line: string) => void): Promise<bo
       ok &&= pass
       log(`${pass ? 'PASS' : 'FAIL'} adaptive: oversized step rejected (rejected ${stats.rejected}, accepted ${stats.accepted}, h = ${stats.h.toFixed(4)}, max|u| = ${peak.toFixed(3)})`)
   })
+  // The PI controller keeps the step size smooth: a nonlinear run from a tiny step to saturation has almost
+  // no rejected steps (the plain controller rejected about one step in ten in the CPU prototype)
+  await section(['adaptive'], 'adaptive smoothness', async () => {
+    const opts = { enabled: true, tol: 1e-3, hmax: 2, hmin: 1e-4 }
+    const { data, stats } = await runAdaptive(device, swiftHohenberg, stripes(2, 0.05), { r: 0.2, g: 0 }, 0.01, opts, 60)
+    const amplitude = stripeAmplitude(data, 2)
+    const pass = stats.rejected <= 2 && Number.isFinite(amplitude) && amplitude > 0.05 && amplitude < 0.6
+    ok &&= pass
+    log(`${pass ? 'PASS' : 'FAIL'} adaptive: smooth step-size control (rejected ${stats.rejected} of ${stats.accepted + stats.rejected}, h = ${stats.h.toFixed(3)}, stripe amplitude ${amplitude.toFixed(3)})`)
+  })
   await section(['coef'], 'GPU coefficients', coefficientTests)
   // Swift–Hohenberg: nonlinear saturation of stripes, amplitude → sqrt(4r/3) for small r
   await section(['swift-hohenberg'], 'SH saturation', async () => {
