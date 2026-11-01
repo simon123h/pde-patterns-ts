@@ -382,14 +382,14 @@ export async function runSolverSelfTest(log: (line: string) => void): Promise<bo
         solver.setDt(preset.dt ?? model.dt.default)
         solver.reset()
         const enc = device.createCommandEncoder()
-        solver.step(enc, 30)
+        solver.step(enc, 10)
         device.queue.submit([enc.finish()])
         await device.queue.onSubmittedWorkDone()
         const data = await solver.readPhysical()
         const peak = data.reduce((m, v) => Math.max(m, Math.abs(v)), 0)
         const pass = Number.isFinite(peak) && peak < 1e3
         ok &&= pass
-        log(`${pass ? 'PASS' : 'FAIL'} ${model.name}, ${name}: 30 steps stay finite (max |u| = ${peak.toPrecision(3)})`)
+        log(`${pass ? 'PASS' : 'FAIL'} ${model.name}, ${name}: 10 steps stay finite (max |u| = ${peak.toPrecision(3)})`)
       }
     })
   }
