@@ -35,7 +35,7 @@ const toleranceExp = ref(-3) // error tolerance = 10^toleranceExp
 const maxDt = ref(0)
 const colormap = ref(COLORMAPS.some((c) => c.id === stored.global.colormap) ? (stored.global.colormap as string) : 'viridis')
 const brushSize = ref(3) // percent of the domain length
-const brushStrength = ref(Number.isFinite(stored.global.brushStrength) ? Math.min(Math.max(stored.global.brushStrength!, 0.1), 5) : 1)
+const brushStrength = ref(Number.isFinite(stored.global.brushStrength) ? Math.min(Math.max(stored.global.brushStrength!, 0.1), 5) : 0.3)
 const running = ref(true)
 const params = reactive<Record<string, number>>({})
 const stats = reactive({ fps: 0, time: 0, dt: 0, accepted: 0, rejected: 0, recoveries: 0 })
