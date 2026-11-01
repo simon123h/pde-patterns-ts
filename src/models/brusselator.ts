@@ -20,6 +20,10 @@ export const brusselator = defineModel(
     dt: { default: 0.1, min: 0.01, max: 0.5, step: 0.01 },
     stepsPerFrame: 4,
     paint: { amounts: [1, 0], sigma: 0.03 },
+    presets: [
+      { name: 'Fine spots', description: 'Hexagonal Turing spots, well above threshold.', params: { A: 2, B: 4.6, Dv: 8 } },
+      { name: 'Wide spots', description: 'Large, widely spaced spots.', params: { A: 1, B: 2.6, Dv: 8 } },
+    ],
     views: [
       { label: 'u', field: 0, kind: 're' },
       { label: 'v', field: 1, kind: 're' },

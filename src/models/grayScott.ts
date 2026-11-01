@@ -22,6 +22,11 @@ export const grayScott = defineModel(
     dt: { default: 1, min: 0.1, max: 8, step: 0.1 },
     stepsPerFrame: 8,
     paint: { amounts: [-0.5, 0.25], sigma: 0.03 },
+    presets: [
+      { name: 'Labyrinth (coral)', description: 'Winding stripes that fill the domain.', params: { F: 0.0545, k: 0.062 } },
+      { name: 'Spot lattice', description: 'Stable spots on a hexagonal lattice.', params: { F: 0.03, k: 0.062 } },
+      { name: 'Chaotic', description: 'Irregular, never settling structures.', params: { F: 0.026, k: 0.051 } },
+    ],
     views: [
       { label: 'v', field: 1, kind: 're' },
       { label: 'u', field: 0, kind: 're' },
