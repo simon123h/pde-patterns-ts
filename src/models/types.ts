@@ -89,9 +89,14 @@ export interface ModelImpl {
   /** Whether the nonlinearity needs the spatial gradients `ux`, `uy` (otherwise they are zero). */
   usesGradient?: boolean
   /**
+   * Whether the nonlinearity also needs `lap` (∇²u), `lapx`, `lapy` (∇∇²u) and `bilap` (∇⁴u), all
+   * arrays like `ux` (implies the gradient). Costs four more inverse FFTs per field and stage.
+   */
+  usesHigherDerivatives?: boolean
+  /**
    * WGSL body of
-   *   fn nonlinear(u: array<vec2<f32>, FIELDS>, ux: array<vec2<f32>, FIELDS>,
-   *                uy: array<vec2<f32>, FIELDS>, xy: vec2<f32>, f: u32) -> vec2<f32>
+   *   fn nonlinear(u, ux, uy, lap, lapx, lapy, bilap: array<vec2<f32>, FIELDS>,
+   *                xy: vec2<f32>, f: u32) -> vec2<f32>
    * returning N_f pointwise as (re, im), where `xy` is the position in the domain, in [0, L)².
    * Parameters are available as `params.<key>` (f32); `params.dx` is the grid spacing.
    */
