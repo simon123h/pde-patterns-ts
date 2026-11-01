@@ -114,10 +114,19 @@ tests/          CPU unit tests
 
 ### Adding a model
 
-Create `src/models/<name>.ts` exporting a `SpectralModel` (see `src/models/types.ts` for the
-documented fields) and add it to `src/models/index.ts`. A model with a real field needs, at a
-minimum: the parameters, a linear symbol, a WGSL nonlinearity returning a `vec2<f32>` (re, im),
-a view list and an initial condition. Everything else — UI, stepping, rendering — is generic.
+Create `src/models/<name>.ts` that calls `defineModel(spec, impl)` and add the result to
+`src/models/index.ts`; `src/models/cahnHilliard.ts` is a short example.
+
+- The **spec** is plain data (`ModelSpec` in `src/models/types.ts`): name, description, parameters with
+  ranges and defaults, default domain size and dt, steps per frame, views, brush and optional
+  `presets`. The UI is built entirely from it.
+- The **implementation** (`ModelImpl`) holds the pseudospectral part: the linear symbol, an optional
+  Fourier multiplier for the nonlinearity, a WGSL nonlinearity returning a `vec2<f32>` (re, im),
+  and the initial condition.
+
+`defineModel` rejects inconsistent models at start-up (defaults out of range, a view of a missing
+field, a WGSL body that uses an undeclared parameter, ...). Every registered model, and each of its
+presets, is also covered automatically by `tests/models.test.ts` and by the solver self-test.
 
 ## Ideas for later
 
