@@ -17,6 +17,19 @@ const N = 32
 const LENGTH = 4 * Math.PI
 const GRID = { nx: N, ny: N, dx: LENGTH / N }
 
+// Building a solver compiles its shaders, which takes minutes on a software adapter, so each model's
+// solver is built once and reused (reset, parameters, dt and domain are set again for every test).
+const solvers = new Map<string, SpectralSolver>()
+function solverFor(device: GPUDevice, model: SpectralModel, domain: number): SpectralSolver {
+  let solver = solvers.get(model.id)
+  if (!solver) {
+    solver = new SpectralSolver(device, model, { nx: N, ny: N, dx: domain / N })
+    solvers.set(model.id, solver)
+  }
+  solver.setDomain(domain)
+  return solver
+}
+
 /** Interleaved (re, im) of all fields in physical space after running `steps` steps of size h. */
 async function run(
   device: GPUDevice,
@@ -27,7 +40,7 @@ async function run(
   steps: number,
   grid = GRID,
 ): Promise<{ data: Float32Array; time: number }> {
-  const solver = new SpectralSolver(device, model, grid)
+  const solver = solverFor(device, model, grid.nx * grid.dx)
   solver.setParams(params)
   solver.setDt(h)
   solver.reset(init)
@@ -39,9 +52,7 @@ async function run(
     await device.queue.onSubmittedWorkDone()
   }
   const data = await solver.readPhysical()
-  const time = solver.time
-  solver.destroy()
-  return { data, time }
+  return { data, time: solver.time }
 }
 
 /** Real stripes a·cos(2π m x / L), constant in y. */
@@ -224,14 +235,13 @@ export async function runSolverSelfTest(log: (line: string) => void): Promise<bo
   }
   // Brush: a stamp of amplitude 0.5 (SH paint amount) at a grid node must give a Gaussian of that peak
   {
-    const solver = new SpectralSolver(device, swiftHohenberg, GRID)
+    const solver = solverFor(device, swiftHohenberg, LENGTH)
     solver.reset(new Float32Array(N * N))
     const sigma = 0.06 * LENGTH
     const enc = device.createCommandEncoder()
     solver.paint(enc, new Float32Array([LENGTH / 2, LENGTH / 2, 2, 0]), sigma) // scale 2 × amount 0.5
     device.queue.submit([enc.finish()])
     const data = await solver.readPhysical()
-    solver.destroy()
     let peak = -Infinity
     let at = 0
     let sum = 0
@@ -360,7 +370,7 @@ export async function runSolverSelfTest(log: (line: string) => void): Promise<bo
   for (const model of models) {
     const settings = [{ name: 'defaults', preset: {} as { params?: Record<string, number>; domain?: number; dt?: number } }]
     for (const preset of model.presets ?? []) settings.push({ name: `preset "${preset.name}"`, preset })
-    const solver = new SpectralSolver(device, model, { nx: N, ny: N, dx: model.domain.default / N }) // one solver: pipelines are slow to build
+    const solver = solverFor(device, model, model.domain.default)
     for (const { name, preset } of settings) {
       const domain = preset.domain ?? model.domain.default
       solver.setParams({ ...Object.fromEntries(model.params.map((p) => [p.key, p.default])), ...preset.params })
@@ -377,7 +387,6 @@ export async function runSolverSelfTest(log: (line: string) => void): Promise<bo
       ok &&= pass
       log(`${pass ? 'PASS' : 'FAIL'} ${model.name}, ${name}: 30 steps stay finite (max |u| = ${peak.toPrecision(3)})`)
     }
-    solver.destroy()
   }
   return ok
 }
