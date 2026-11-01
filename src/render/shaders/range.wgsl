@@ -7,7 +7,7 @@ struct Params {
   stride: u32,
   first: u32,
   blend: f32,
-  pad0: u32,
+  kind: u32,
   pad1: u32,
   pad2: u32,
 }
@@ -15,6 +15,16 @@ struct Params {
 @group(0) @binding(0) var<uniform> p: Params;
 @group(0) @binding(1) var<storage, read> field: array<vec2<f32>>;
 @group(0) @binding(2) var<storage, read_write> range: array<f32, 2>;
+
+// kind: 0 Re, 1 Im, 2 |.|, 3 arg
+fn value(v: vec2<f32>, kind: u32) -> f32 {
+  switch (kind) {
+    case 0u: { return v.x; }
+    case 1u: { return v.y; }
+    case 2u: { return length(v); }
+    default: { return atan2(v.y, v.x); }
+  }
+}
 
 var<workgroup> mins: array<f32, 256>;
 var<workgroup> maxs: array<f32, 256>;
@@ -28,7 +38,7 @@ fn main(@builtin(local_invocation_index) li: u32) {
     if (i >= p.count) {
       break;
     }
-    let v = field[p.offset + i].x;
+    let v = value(field[p.offset + i], p.kind);
     lo = min(lo, v);
     hi = max(hi, v);
     i += 256u * p.stride;

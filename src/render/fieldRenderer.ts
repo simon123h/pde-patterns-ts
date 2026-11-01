@@ -1,8 +1,10 @@
 import fieldWgsl from './shaders/field.wgsl?raw'
+import type { ViewKind } from '../models/types'
 import rangeWgsl from './shaders/range.wgsl?raw'
 
 export type Colormap = 'viridis' | 'gray'
 const COLORMAP_ID: Record<Colormap, number> = { viridis: 0, gray: 1 }
+const KIND_ID: Record<ViewKind, number> = { re: 0, im: 1, abs: 2, arg: 3 }
 
 /** Draws one field of a GPU buffer onto a canvas, auto-scaling the color range on the GPU. */
 export class FieldRenderer {
@@ -60,8 +62,8 @@ export class FieldRenderer {
     this.first = true
   }
 
-  /** Encode range detection and drawing of field `fieldIndex` into the canvas. */
-  render(encoder: GPUCommandEncoder, fieldIndex: number, colormap: Colormap): void {
+  /** Encode range detection and drawing of one component of field `fieldIndex` into the canvas. */
+  render(encoder: GPUCommandEncoder, fieldIndex: number, kind: ViewKind, colormap: Colormap): void {
     const cells = this.nx * this.ny
     const offset = fieldIndex * cells
     const stride = Math.max(1, Math.floor(cells / 65536)) | 1 // odd stride avoids lattice aliasing
@@ -72,6 +74,7 @@ export class FieldRenderer {
     rp.setUint32(8, stride, true)
     rp.setUint32(12, this.first ? 1 : 0, true)
     rp.setFloat32(16, 0.15, true)
+    rp.setUint32(20, KIND_ID[kind], true)
     this.device.queue.writeBuffer(this.rangeParams, 0, rp.buffer)
     this.first = false
 
@@ -82,6 +85,7 @@ export class FieldRenderer {
     up.setUint32(12, COLORMAP_ID[colormap], true)
     up.setFloat32(16, this.canvas.width, true)
     up.setFloat32(20, this.canvas.height, true)
+    up.setUint32(24, KIND_ID[kind], true)
     this.device.queue.writeBuffer(this.renderParams, 0, up.buffer)
 
     const compute = encoder.beginComputePass()
