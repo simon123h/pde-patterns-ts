@@ -2,7 +2,7 @@ name: CI
 
 # Fast checks run for every pull request and for pushes to main. The browser self-tests run the
 # WebGPU code on a software GPU and take minutes, so they run only on pull requests that touch
-# code they cover (the merged result was already tested in the pull request), one page per job.
+# code they cover (the merged result was already tested in the pull request), split into parallel jobs.
 
 on:
   push:
@@ -66,7 +66,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        page: [fft, render, solver]
+        # the solver page is split by group (one job per equation, see ?only= in solverSelfTest.ts) because
+        # one job takes 8-15 minutes on a software GPU and runners differ in speed by a factor of 2-3;
+        # tests/ci.test.ts checks that every equation is listed
+        page:
+          - fft
+          - render
+          - solver:swift-hohenberg
+          - solver:cahn-hilliard
+          - solver:kuramoto-sivashinsky
+          - solver:nikolaevskiy
+          - solver:advection-diffusion
+          - solver:cgle
+          - solver:gray-scott
+          - solver:brusselator
+          - solver:thin-film
+          - solver:adaptive
+          - solver:coef
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
