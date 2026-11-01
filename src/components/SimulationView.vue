@@ -5,7 +5,7 @@ import { models } from '../models'
 import type { SpectralModel } from '../models/types'
 import { COLORMAPS } from '../render/colormaps'
 import { FieldRenderer } from '../render/fieldRenderer'
-import { SpectralSolver } from '../solver/spectralSolver'
+import { MAX_STAMPS, SpectralSolver } from '../solver/spectralSolver'
 
 const GRID_SIZES = [64, 128, 256, 512, 1024]
 
@@ -22,15 +22,25 @@ const domain = ref(model.value.domain.default)
 const stepsPerFrame = ref(model.value.stepsPerFrame)
 const viewIndex = ref(0)
 const colormap = ref('viridis')
+const brushSize = ref(3) // percent of the domain length
+const brushStrength = ref(1)
 const running = ref(true)
 const params = reactive<Record<string, number>>({})
 const stats = reactive({ fps: 0, time: 0 })
+// updated every frame, copied into `stats` a few times per second: re-rendering the whole panel
+// at 60 Hz made native controls (the equation dropdown in particular) flicker and close
+let liveFps = 0
+let liveTime = 0
+let statsTimer = 0
 
 let device: GPUDevice | null = null
 let solver: SpectralSolver | null = null
 let renderer: FieldRenderer | null = null
 let raf = 0
 let lastFrame = 0
+// brush stamps queued by pointer events, applied at the start of the next frame
+let pendingStamps: number[] = []
+let lastPaint: { x: number; y: number } | null = null
 let inFlight = 0 // submitted frames the GPU hasn't finished; limits queue build-up on slow adapters
 
 function loadModelDefaults() {
@@ -41,6 +51,7 @@ function loadModelDefaults() {
   domain.value = m.domain.default
   stepsPerFrame.value = m.stepsPerFrame
   viewIndex.value = 0
+  brushSize.value = (m.paint?.sigma ?? 0.03) * 100
 }
 
 function selectModel(id: string) {
@@ -67,6 +78,44 @@ function resetSimulation() {
   renderer?.resetRange()
 }
 
+/** Domain coordinates of a pointer event (y grows downward, like the rendered field). */
+function domainPoint(e: PointerEvent) {
+  const rect = canvas.value!.getBoundingClientRect()
+  const length = solver!.domain
+  return { x: ((e.clientX - rect.left) / rect.width) * length, y: ((e.clientY - rect.top) / rect.height) * length }
+}
+
+function queueStamps(e: PointerEvent) {
+  if (!solver) return
+  const to = domainPoint(e)
+  const sign = (e.buttons & 2 ? -1 : 1) * brushStrength.value
+  const radius = (brushSize.value / 100) * solver.domain
+  const from = lastPaint ?? to
+  // stamp along the stroke at a fraction of the brush radius so fast strokes stay continuous
+  const distance = Math.hypot(to.x - from.x, to.y - from.y)
+  const n = Math.max(1, Math.ceil(distance / (0.4 * radius)))
+  for (let i = 1; i <= n; i++) {
+    const t = i / n
+    pendingStamps.push(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t, sign, 0)
+  }
+  lastPaint = to
+}
+
+function onPointerDown(e: PointerEvent) {
+  if (e.button > 2) return
+  canvas.value?.setPointerCapture(e.pointerId)
+  lastPaint = null
+  queueStamps(e)
+}
+
+function onPointerMove(e: PointerEvent) {
+  if (e.buttons & 3) queueStamps(e)
+}
+
+function onPointerUp() {
+  lastPaint = null
+}
+
 function resizeCanvas() {
   const el = canvas.value
   if (!el) return
@@ -83,6 +132,10 @@ function frame(now: number) {
   if (!device || !solver || !renderer || inFlight >= 2) return
   resizeCanvas()
   const enc = device.createCommandEncoder()
+  if (pendingStamps.length) {
+    solver.paint(enc, new Float32Array(pendingStamps.slice(0, MAX_STAMPS * 4)), (brushSize.value / 100) * solver.domain)
+    pendingStamps = pendingStamps.slice(MAX_STAMPS * 4)
+  }
   if (running.value) solver.step(enc, stepsPerFrame.value)
   solver.encodeView(enc)
   const view = model.value.views[viewIndex.value] ?? model.value.views[0]!
@@ -91,9 +144,9 @@ function frame(now: number) {
   inFlight++
   void device.queue.onSubmittedWorkDone().then(() => inFlight--)
 
-  if (lastFrame) stats.fps = stats.fps * 0.9 + (1000 / (now - lastFrame)) * 0.1
+  if (lastFrame) liveFps = liveFps * 0.9 + (1000 / (now - lastFrame)) * 0.1
   lastFrame = now
-  stats.time = solver.time
+  liveTime = solver.time
 }
 
 onMounted(async () => {
@@ -106,6 +159,10 @@ onMounted(async () => {
     device.lost.then((info) => (error.value = `GPU device lost: ${info.message}`))
     build()
     raf = requestAnimationFrame(frame)
+    statsTimer = window.setInterval(() => {
+      stats.fps = liveFps
+      stats.time = liveTime
+    }, 250)
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   }
@@ -113,6 +170,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   cancelAnimationFrame(raf)
+  clearInterval(statsTimer)
   solver?.destroy()
   renderer?.destroy()
 })
@@ -130,7 +188,15 @@ watch(
 
 <template>
   <div class="layout">
-    <div class="stage"><canvas ref="canvas" class="view" /></div>
+    <div class="stage"><canvas
+        ref="canvas"
+        class="view"
+        @pointerdown.prevent="onPointerDown"
+        @pointermove="onPointerMove"
+        @pointerup="onPointerUp"
+        @pointercancel="onPointerUp"
+        @contextmenu.prevent
+      /></div>
     <aside class="panel">
       <h1>PDE Patterns</h1>
       <p v-if="error" class="error">{{ error }}</p>
@@ -138,7 +204,10 @@ watch(
 
       <label>
         <span>equation</span>
-        <select :value="model.id" @change="selectModel(($event.target as HTMLSelectElement).value)">
+        <select
+          :value="model.id"
+          @change="(e) => { selectModel((e.target as HTMLSelectElement).value); (e.target as HTMLSelectElement).blur() }"
+        >
           <option v-for="m in models" :key="m.id" :value="m.id">{{ m.name }}</option>
         </select>
       </label>
@@ -183,6 +252,17 @@ watch(
         </select>
       </label>
 
+      <h2>Brush</h2>
+      <label>
+        <span>size <output>{{ brushSize.toFixed(1) }} % of L</output></span>
+        <input v-model.number="brushSize" type="range" min="0.5" max="15" step="0.5" />
+      </label>
+      <label>
+        <span>strength <output>{{ brushStrength.toFixed(1) }}×</output></span>
+        <input v-model.number="brushStrength" type="range" min="0.1" max="5" step="0.1" />
+      </label>
+      <p class="muted desc">Drag on the field: left button adds, right button subtracts.</p>
+
       <div class="buttons">
         <button @click="running = !running">{{ running ? 'Pause' : 'Run' }}</button>
         <button @click="resetSimulation">Reset</button>
@@ -194,7 +274,7 @@ watch(
 <style scoped>
 .layout { display: flex; height: 100vh; }
 .stage { flex: 1; min-width: 0; display: grid; place-items: center; background: #000; }
-.view { width: min(100%, 100vh); aspect-ratio: 1; }
+.view { width: min(100%, 100vh); aspect-ratio: 1; cursor: crosshair; touch-action: none; }
 .panel { width: 280px; padding: 16px; background: var(--panel); overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
 h1 { font-size: 18px; margin: 0; }
 h2 { font-size: 13px; margin: 12px 0 0; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
