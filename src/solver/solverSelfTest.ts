@@ -285,12 +285,18 @@ export async function runSolverSelfTest(log: (line: string) => void): Promise<bo
       check('CH mass conservation', mean(data), m0 / init.length, 1e-5)
   })
   // Kuramoto–Sivashinsky: the gradient term shifts the mean by −¼ a² k² h per unit time
+  // The gradient term −½|∇u|² of cos(kx) is −¼a²k² + ¼a²k² cos(2kx): the mean is frozen (no drift) and the
+  // second harmonic grows as ¼a²k² h φ₁(L h) with L = (2k)² − (2k)⁴ for ν = 1
   await section(['kuramoto-sivashinsky'], 'KS gradient', async () => {
-      const a = 0.5
-      const k = 1
-      const h = 0.01
-      const { data } = await run(device, kuramotoSivashinsky, stripes(2, a), { nu: 1 }, h, 1)
-      check('KS gradient nonlinearity (mean drift)', mean(data), -0.25 * a * a * k * k * h, 2e-2)
+    const a = 0.5
+    const k = 1
+    const h = 0.01
+    const L = (2 * k) ** 2 - (2 * k) ** 4
+    const { data } = await run(device, kuramotoSivashinsky, stripes(2, a), { nu: 1 }, h, 1)
+    check('KS gradient nonlinearity (second harmonic)', stripeAmplitude(data, 4), (0.25 * a * a * k * k * (1 - Math.exp(L * h))) / -L, 2e-2)
+    const drift = Math.abs(mean(data))
+    ok &&= drift < 1e-6
+    log(`${drift < 1e-6 ? 'PASS' : 'FAIL'} KS mean stays frozen: |mean| = ${drift.toExponential(2)}`)
   })
   // Convection–diffusion, uniform drift only: cos(kx) translates by c t and decays as e^{−D k² t}
   await section(['advection-diffusion'], 'advection drift', async () => {

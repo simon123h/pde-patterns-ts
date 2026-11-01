@@ -30,3 +30,16 @@ describe.each(models)('model $id', (model) => {
     expect(spectralModes(model, grid)).toBe((model.complex ? 16 : 9) * 16)
   })
 })
+
+// Equations that only involve derivatives of u let the mean drift without bound through −½|∇u|², which in f32
+// eventually swamps the fluctuations; their nonlinearity must not act on the k = 0 mode.
+describe.each(['kuramoto-sivashinsky', 'nikolaevskiy'])('%s mean', (id) => {
+  const model = models.find((m) => m.id === id)!
+  it('is frozen: the nonlinearity has no k = 0 component', () => {
+    const grid = { nx: 16, ny: 16, dx: 1 }
+    const params = Object.fromEntries(model.params.map((p) => [p.key, p.default]))
+    const symbols = buildSymbols(model, params, grid)
+    expect(symbols[2]).toBe(0) // multiplier of mode (0, 0)
+    expect(symbols[4 * 16 + 2]).toBe(1) // and of the next mode, so only k = 0 is affected
+  })
+})

@@ -23,6 +23,9 @@ export const nikolaevskiy = defineModel(
   {
     // ∇² → −k², so L = k² [ε − (1 − k²)²]
     linearSymbol: (k2, _f, p) => k2 * (p.eps! - (1 - k2) ** 2),
+    // as for Kuramoto–Sivashinsky: only derivatives of u appear, and −½|∇u|² would let the mean drift without
+    // bound, so the k = 0 mode of the nonlinearity is frozen (the mean stays at its initial value)
+    nonlinearSymbol: (k2) => (k2 === 0 ? 0 : 1),
     usesGradient: true,
     nonlinearWgsl: 'return vec2<f32>(-0.5 * (ux[0].x * ux[0].x + uy[0].x * uy[0].x), 0.0);',
     initial: (ctx) => noisyState(ctx, [0], 0.1),
