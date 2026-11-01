@@ -6,12 +6,15 @@ import coefficientsWgsl from './shaders/coefficients.wgsl?raw'
 import combineWgsl from './shaders/combine.wgsl?raw'
 import commitWgsl from './shaders/commit.wgsl?raw'
 import controllerWgsl from './shaders/controller.wgsl?raw'
+import { StateGuard } from './stateGuard'
 import { derivativeCount, derivativeShader } from './derivativeShader'
 import paintWgsl from './shaders/paint.wgsl?raw'
 import { buildCoefficients, buildSymbols, COEFFICIENT_PLANES, spectralModes, type GridSpec } from './coefficients'
 import { nonlinearShader } from './nonlinearShader'
 
 const WORKGROUP = 256
+/** Halvings of the step size in a row (without a healthy check in between) before giving up. */
+const MAX_CONSECUTIVE_RECOVERIES = 8
 const STORAGE = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
 /** Most brush stamps applied in one frame. */
 export const MAX_STAMPS = 256
@@ -99,6 +102,10 @@ export class SpectralSolver {
     commit: GPUComputePipeline
     commitBind: GPUBindGroup
   }
+  private readonly guard: StateGuard
+  private recoveryCount = 0
+  private consecutiveRecoveries = 0
+  private gaveUp = false
   private readonly paintPipeline: GPUComputePipeline
   private readonly paintBind: GPUBindGroup
   private readonly paintUniform: GPUBuffer
@@ -216,6 +223,8 @@ export class SpectralSolver {
       commitBind: bind(commit, [commitUniform, ctl, this.stageState, this.uHat]),
     }
 
+    this.guard = new StateGuard(device, this.uHat, ctl, this.spectralTotal)
+
     this.paintPipeline = pipeline(paintWgsl)
     this.paintUniform = buffer(48, UNIFORM)
     this.stampBuffer = buffer(MAX_STAMPS * 16, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST)
@@ -249,6 +258,8 @@ export class SpectralSolver {
   }
 
   setDt(h: number): void {
+    this.gaveUp = false
+    this.consecutiveRecoveries = 0
     if (this.adaptive.enabled) {
       // the controller owns h; a manual change restarts it from the requested value
       this.h = h
@@ -328,8 +339,11 @@ export class SpectralSolver {
     this.device.queue.writeBuffer(this.physBuffer, 0, upload)
     const enc = this.device.createCommandEncoder()
     this.fft.forward(enc, this.physBuffer, this.uHat)
+    this.guard.markSnapshot(enc, { h: this.h, t: 0 })
     this.device.queue.submit([enc.finish()])
     this.cpuTime = 0
+    this.consecutiveRecoveries = 0
+    this.gaveUp = false
     if (this.adaptive.enabled) this.initController(Math.min(Math.max(this.h, this.adaptive.hmin), this.adaptive.hmax), 0)
   }
 
@@ -389,6 +403,25 @@ export class SpectralSolver {
         this.cpuTime += this.h
       }
     }
+    this.guard.advance(count)
+  }
+
+  /**
+   * Encode a health check of the state if one is due (after `step`, before submitting). When the state
+   * has blown up, `afterSubmit` rolls it back to the last healthy snapshot and halves the step size.
+   */
+  encodeHealthCheck(encoder: GPUCommandEncoder): void {
+    this.guard.encodeCheck(encoder)
+  }
+
+  /** Number of times the state exploded and was rolled back with a smaller step size. */
+  get recoveries(): number {
+    return this.recoveryCount
+  }
+
+  /** The state kept exploding even with much smaller steps: stepping should stop. */
+  get unstable(): boolean {
+    return this.gaveUp
   }
 
   /** In adaptive mode: encode a copy of the controller state for `afterSubmit` to read back. */
@@ -400,11 +433,15 @@ export class SpectralSolver {
 
   /** Call right after submitting the encoder passed to `encodeStatsCopy`. */
   afterSubmit(): Promise<void> {
-    if (!this.statsPending) return Promise.resolve()
+    const health = this.guard.afterSubmit(this.cpuTime, this.h, this.adaptive.enabled).then((verdict) => {
+      if (verdict === 'exploded') this.recover()
+      else if (verdict === 'healthy') this.consecutiveRecoveries = 0
+    })
+    if (!this.statsPending) return health
     this.statsPending = false
     this.statsMapping = true
     const staging = this.adapt.staging
-    return staging
+    const stats = staging
       .mapAsync(GPUMapMode.READ)
       .then(() => {
         const f = new Float32Array(staging.getMappedRange().slice(0))
@@ -413,6 +450,29 @@ export class SpectralSolver {
       })
       .catch(() => {})
       .finally(() => (this.statsMapping = false))
+    return Promise.all([health, stats]).then(() => {})
+  }
+
+  /** Roll the state back to the last healthy snapshot and continue with half the step size. */
+  private recover(): void {
+    this.recoveryCount++
+    this.consecutiveRecoveries++
+    const snapshot = this.guard.snapshotState
+    const enc = this.device.createCommandEncoder()
+    this.guard.restore(enc)
+    this.device.queue.submit([enc.finish()])
+    const h = (this.adaptive.enabled && this.latestStats.h > 0 ? this.latestStats.h : this.h) / 2
+    if (this.consecutiveRecoveries > MAX_CONSECUTIVE_RECOVERIES) {
+      this.gaveUp = true
+      return
+    }
+    this.h = h
+    if (this.adaptive.enabled) {
+      this.initController(h, snapshot.t)
+    } else {
+      this.cpuTime = snapshot.t
+      this.coefficientsDirty = true
+    }
   }
 
   /** Read the ETDRK4 coefficient planes back (complex, interleaved); for tests. */
@@ -459,6 +519,7 @@ export class SpectralSolver {
 
   destroy(): void {
     this.fft.destroy()
+    this.guard.destroy()
     for (const b of this.owned) b.destroy()
   }
 
