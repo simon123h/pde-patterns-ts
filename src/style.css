@@ -1,0 +1,15 @@
+:root {
+  color-scheme: dark;
+  --bg: #0e1014;
+  --panel: #171a21;
+  --fg: #d8dce6;
+  --muted: #8a92a6;
+  --accent: #6aa9ff;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.4 system-ui, sans-serif;
+}
