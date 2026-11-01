@@ -31,9 +31,9 @@ done headlessly: say so instead of claiming them verified. On Linux, real WebGPU
 
 ## Workflow
 
-- Commit in small steps with conventional commit messages (`feat(solver): ...`, `fix:`, `test:`,
+- Commit in with conventional commit messages (`feat(solver): ...`, `fix:`, `test:`,
   `docs:`, `refactor:`, `ci:`).
-- Work on a feature branch and open a pull request; do not push directly to `main`.
+- Larger work should be done on a feature branch and have a pull request; smaller things can go directly to `main`.
 - Do not leave dev servers or headless Chrome processes running. `scripts/browser-tests.mjs`
   cleans up after itself; stop anything else you start, by port or pid file, not with `pkill -f`.
 - Adding an equation: see "Adding a model" in the README. `defineModel` validates the model and
