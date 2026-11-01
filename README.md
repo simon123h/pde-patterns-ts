@@ -62,7 +62,7 @@ lines and ends with `ALL PASSED`:
 | Page | Checks |
 |---|---|
 | `/fft-test.html` | complex and real-to-complex GPU FFTs against the f64 CPU reference (incl. batching) plus timings |
-| `/solver-test.html` | linear growth/decay rates, conservation laws, saturation amplitude, the brush, adaptive stepping and GPU-vs-CPU coefficients (`?only=coef` for just the last) |
+| `/solver-test.html` | linear growth/decay rates, conservation laws, saturation amplitude, the brush, adaptive stepping and GPU-vs-CPU coefficients (`?only=<group>` runs one group: a model id, `coef`, `adaptive`, `models`; each section logs its time) |
 | `/render-test.html` | colormaps, diverging centering and phase view rendered offscreen |
 
 ## Numerics
