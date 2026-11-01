@@ -1,5 +1,9 @@
 name: CI
 
+# Fast checks run for every pull request and for pushes to main. The browser self-tests run the
+# WebGPU code on a software GPU and take minutes, so they run only on pull requests that touch
+# code they cover (the merged result was already tested in the pull request), one page per job.
+
 on:
   push:
     branches: [main]
@@ -24,10 +28,44 @@ jobs:
       - run: npm test
       - run: npm run build
 
-  browser:
-    name: Browser self-tests (SwiftShader)
+  changes:
+    name: Detect changes
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    outputs:
+      browser: ${{ steps.filter.outputs.browser }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.base_ref }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then
+            echo "browser=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files=$(git diff --name-only "origin/$BASE...HEAD")
+          echo "$files"
+          # GPU code, solver and shaders, rendering, models, math, test pages and runner, build setup, this workflow
+          pattern='^(src/(gpu|solver|render|models|math)/|[a-z-]+-test\.html$|scripts/|package(-lock)?\.json$|vite\.config\.ts$|tsconfig\.json$|\.github/workflows/)'
+          if echo "$files" | grep -Eq "$pattern"; then
+            echo "browser=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "browser=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  browser:
+    name: Browser self-test (${{ matrix.page }})
+    needs: changes
+    if: needs.changes.outputs.browser == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        page: [fft, render, solver]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -35,4 +73,4 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run test:browser
+      - run: npm run test:browser -- ${{ matrix.page }}

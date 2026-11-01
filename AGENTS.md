@@ -12,8 +12,8 @@ Browser PDE pattern-formation simulator: TypeScript, Vue 3, WebGPU, Fourier pseu
 | `npm run test:browser` (all three pages) | 10+ min | leave to CI |
 
 The browser tests run the WebGPU code on SwiftShader (a software GPU), which saturates the CPU and
-slows the whole machine down. CI runs all of them on every push and pull request, so do not run
-the full browser suite locally by default.
+slows the whole machine down. CI runs all of them (one job per page, in parallel) on pull requests that touch code they cover,
+so do not run the full browser suite locally by default.
 
 Run a single browser page locally only when you changed the code it covers:
 - `fft` for `src/gpu/` (FFT, transpose, real-to-complex)
