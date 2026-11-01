@@ -18,6 +18,10 @@ export const kuramotoSivashinsky = defineModel(
   {
     // ∇² → −k², ∇⁴ → k⁴
     linearSymbol: (k2, _f, p) => k2 - p.nu! * k2 * k2,
+    // The equation only involves derivatives of u, so u + c is a solution too, and −½|∇u|² makes the mean fall
+    // without bound (in f32 the fluctuations are eventually lost against it). Freezing the k = 0 mode of the
+    // nonlinearity is the same as subtracting the mean drift ½⟨|∇u|²⟩ and keeps the mean at its initial value.
+    nonlinearSymbol: (k2) => (k2 === 0 ? 0 : 1),
     usesGradient: true,
     nonlinearWgsl: 'return vec2<f32>(-0.5 * (ux[0].x * ux[0].x + uy[0].x * uy[0].x), 0.0);',
     initial: (ctx) => noisyState(ctx, [0], 0.1),
