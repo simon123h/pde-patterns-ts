@@ -2,20 +2,22 @@
 import { onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import { requestGpu } from '../gpu/device'
 import { models } from '../models'
+import type { SpectralModel } from '../models/types'
 import { FieldRenderer, type Colormap } from '../render/fieldRenderer'
 import { SpectralSolver } from '../solver/spectralSolver'
 
 const GRID_SIZES = [128, 256, 512, 1024]
-const DX = 0.5
 
 const canvas = ref<HTMLCanvasElement | null>(null)
 const error = ref<string | null>(null)
 const adapterLabel = ref('')
 
-const model = shallowRef(models[0]!)
+const model = shallowRef<SpectralModel>(models[0]!)
 const gridSize = ref(256)
-const dt = ref(0.2)
-const stepsPerFrame = ref(2)
+const dt = ref(model.value.dt.default)
+const domain = ref(model.value.domain.default)
+const stepsPerFrame = ref(model.value.stepsPerFrame)
+const viewIndex = ref(0)
 const colormap = ref<Colormap>('viridis')
 const running = ref(true)
 const params = reactive<Record<string, number>>({})
@@ -27,18 +29,31 @@ let renderer: FieldRenderer | null = null
 let raf = 0
 let lastFrame = 0
 
-function resetParams() {
-  for (const p of model.value.params) params[p.key] = p.default
+function loadModelDefaults() {
+  const m = model.value
+  for (const key of Object.keys(params)) delete params[key]
+  for (const p of m.params) params[p.key] = p.default
+  dt.value = m.dt.default
+  domain.value = m.domain.default
+  stepsPerFrame.value = m.stepsPerFrame
+  viewIndex.value = 0
+}
+
+function selectModel(id: string) {
+  model.value = models.find((m) => m.id === id)!
+  loadModelDefaults()
+  build()
 }
 
 function build() {
   if (!device || !canvas.value) return
   solver?.destroy()
   renderer?.destroy()
-  const grid = { nx: gridSize.value, ny: gridSize.value, dx: DX }
+  const grid = { nx: gridSize.value, ny: gridSize.value, dx: domain.value / gridSize.value }
   solver = new SpectralSolver(device, model.value, grid)
   solver.setParams({ ...params })
   solver.setDt(dt.value)
+  solver.setDomain(domain.value)
   solver.reset()
   renderer = new FieldRenderer(device, canvas.value, solver.physical, grid.nx, grid.ny)
 }
@@ -66,7 +81,8 @@ function frame(now: number) {
   const enc = device.createCommandEncoder()
   if (running.value) solver.step(enc, stepsPerFrame.value)
   solver.encodeView(enc)
-  renderer.render(enc, 0, colormap.value)
+  const view = model.value.views[viewIndex.value] ?? model.value.views[0]!
+  renderer.render(enc, view.field, view.kind, colormap.value)
   device.queue.submit([enc.finish()])
 
   if (lastFrame) stats.fps = stats.fps * 0.9 + (1000 / (now - lastFrame)) * 0.1
@@ -75,7 +91,7 @@ function frame(now: number) {
 }
 
 onMounted(async () => {
-  resetParams()
+  loadModelDefaults()
   try {
     const gpu = await requestGpu()
     device = gpu.device
@@ -97,7 +113,13 @@ onBeforeUnmount(() => {
 
 watch(gridSize, build)
 watch(dt, (v) => solver?.setDt(v))
+watch(domain, (v) => solver?.setDomain(v))
 watch(params, () => solver?.setParams({ ...params }), { deep: true })
+// parameters that only shape the initial condition restart the run
+watch(
+  () => model.value.params.filter((p) => p.resetOnChange).map((p) => params[p.key]),
+  () => resetSimulation(),
+)
 </script>
 
 <template>
@@ -108,16 +130,28 @@ watch(params, () => solver?.setParams({ ...params }), { deep: true })
       <p v-if="error" class="error">{{ error }}</p>
       <p v-else class="muted">{{ adapterLabel || 'WebGPU' }} · {{ stats.fps.toFixed(0) }} fps · t = {{ stats.time.toFixed(1) }}</p>
 
-      <h2>{{ model.name }}</h2>
+      <label>
+        <span>equation</span>
+        <select :value="model.id" @change="selectModel(($event.target as HTMLSelectElement).value)">
+          <option v-for="m in models" :key="m.id" :value="m.id">{{ m.name }}</option>
+        </select>
+      </label>
+      <p class="muted desc">{{ model.description }}</p>
+
+      <h2>Parameters</h2>
       <label v-for="p in model.params" :key="p.key">
         <span>{{ p.label }} <output>{{ params[p.key]?.toFixed(2) }}</output></span>
         <input v-model.number="params[p.key]" type="range" :min="p.min" :max="p.max" :step="p.step" />
       </label>
 
-      <h2>Numerics</h2>
+      <h2>Domain &amp; numerics</h2>
+      <label>
+        <span>domain size L <output>{{ domain.toFixed(model.domain.step < 1 ? 1 : 0) }}</output></span>
+        <input v-model.number="domain" type="range" :min="model.domain.min" :max="model.domain.max" :step="model.domain.step" />
+      </label>
       <label>
         <span>dt <output>{{ dt.toFixed(2) }}</output></span>
-        <input v-model.number="dt" type="range" min="0.01" max="2" step="0.01" />
+        <input v-model.number="dt" type="range" :min="model.dt.min" :max="model.dt.max" :step="model.dt.step" />
       </label>
       <label>
         <span>steps / frame <output>{{ stepsPerFrame }}</output></span>
@@ -127,6 +161,13 @@ watch(params, () => solver?.setParams({ ...params }), { deep: true })
         <span>grid</span>
         <select v-model.number="gridSize">
           <option v-for="n in GRID_SIZES" :key="n" :value="n">{{ n }} × {{ n }}</option>
+        </select>
+        <small class="muted">dx = {{ (domain / gridSize).toPrecision(3) }}</small>
+      </label>
+      <label v-if="model.views.length > 1">
+        <span>view</span>
+        <select v-model.number="viewIndex">
+          <option v-for="(v, i) in model.views" :key="i" :value="i">{{ v.label }}</option>
         </select>
       </label>
       <label>
@@ -159,5 +200,6 @@ button { cursor: pointer; flex: 1; }
 button:hover { border-color: var(--accent); }
 .buttons { display: flex; gap: 8px; margin-top: 8px; }
 .muted { color: var(--muted); margin: 0; }
+.desc { font-size: 12px; }
 .error { color: #ff7b7b; margin: 0; }
 </style>
