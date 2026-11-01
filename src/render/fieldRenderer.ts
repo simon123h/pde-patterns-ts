@@ -28,6 +28,8 @@ export class FieldRenderer {
     field: GPUBuffer,
     private readonly nx: number,
     private readonly ny: number,
+    /** The field buffer holds plain f32 values instead of interleaved complex numbers. */
+    private readonly real = false,
   ) {
     if (target instanceof HTMLCanvasElement) {
       const context = target.getContext('webgpu')
@@ -45,7 +47,7 @@ export class FieldRenderer {
     }
 
     this.rangeParams = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
-    this.renderParams = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
+    this.renderParams = device.createBuffer({ size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     this.rangeBuffer = device.createBuffer({ size: 8, usage: GPUBufferUsage.STORAGE })
     const table = buildPaletteTable()
     this.paletteBuffer = device.createBuffer({ size: table.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST })
@@ -91,10 +93,11 @@ export class FieldRenderer {
     rp.setUint32(12, this.first ? 1 : 0, true)
     rp.setFloat32(16, 0.15, true)
     rp.setUint32(20, KIND_ID[kind], true)
+    rp.setUint32(24, this.real ? 1 : 0, true)
     this.device.queue.writeBuffer(this.rangeParams, 0, rp.buffer)
     this.first = false
 
-    const up = new DataView(new ArrayBuffer(32))
+    const up = new DataView(new ArrayBuffer(48))
     up.setUint32(0, this.nx, true)
     up.setUint32(4, this.ny, true)
     up.setUint32(8, offset, true)
@@ -103,6 +106,7 @@ export class FieldRenderer {
     up.setFloat32(20, this.height(), true)
     up.setUint32(24, KIND_ID[kind], true)
     up.setUint32(28, COLORMAPS[mapIndex]!.diverging ? 1 : 0, true)
+    up.setUint32(32, this.real ? 1 : 0, true)
     this.device.queue.writeBuffer(this.renderParams, 0, up.buffer)
 
     const compute = encoder.beginComputePass()

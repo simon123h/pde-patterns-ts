@@ -8,6 +8,7 @@ async function renderPixels(
   data: Float32Array<ArrayBuffer>,
   kind: 're' | 'im' | 'abs' | 'arg',
   colormap: string,
+  real = false,
 ): Promise<Uint8Array> {
   const field = device.createBuffer({ size: data.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST })
   device.queue.writeBuffer(field, 0, data)
@@ -16,7 +17,7 @@ async function renderPixels(
     format: 'rgba8unorm',
     usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
   })
-  const renderer = new FieldRenderer(device, texture, field, N, N)
+  const renderer = new FieldRenderer(device, texture, field, N, N, real)
   const staging = device.createBuffer({ size: N * N * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ })
   const enc = device.createCommandEncoder()
   renderer.render(enc, 0, kind, colormap)
@@ -53,6 +54,13 @@ export async function runRenderSelfTest(log: (line: string) => void): Promise<bo
   let px = await renderPixels(device, up, 're', 'viridis')
   expect('viridis low', px, 0, [68, 1, 84], 6)
   expect('viridis high', px, N - 1, [253, 231, 37], 6)
+
+  // the same ramp stored as plain f32 (real fields) must look identical
+  const upReal = new Float32Array(N * N)
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) upReal[y * N + x] = up[2 * (y * N + x)]!
+  const pxReal = await renderPixels(device, upReal, 're', 'viridis', true)
+  expect('real f32 field, viridis low', pxReal, 0, [68, 1, 84], 6)
+  expect('real f32 field, viridis high', pxReal, N - 1, [253, 231, 37], 6)
 
   px = await renderPixels(device, up, 're', 'rdbu')
   expect('blue-white-red low', px, 0, [5, 48, 97])

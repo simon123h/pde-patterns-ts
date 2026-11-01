@@ -8,12 +8,12 @@ struct Params {
   first: u32,
   blend: f32,
   kind: u32,
-  pad1: u32,
+  real: u32, // 1: field is plain f32 instead of interleaved complex
   pad2: u32,
 }
 
 @group(0) @binding(0) var<uniform> p: Params;
-@group(0) @binding(1) var<storage, read> field: array<vec2<f32>>;
+@group(0) @binding(1) var<storage, read> field: array<f32>;
 @group(0) @binding(2) var<storage, read_write> range: array<f32, 2>;
 
 // kind: 0 Re, 1 Im, 2 |.|, 3 arg
@@ -38,7 +38,14 @@ fn main(@builtin(local_invocation_index) li: u32) {
     if (i >= p.count) {
       break;
     }
-    let v = value(field[p.offset + i], p.kind);
+    let idx = p.offset + i;
+    var z = vec2<f32>(0.0);
+    if (p.real == 1u) {
+      z = vec2<f32>(field[idx], 0.0);
+    } else {
+      z = vec2<f32>(field[2u * idx], field[2u * idx + 1u]);
+    }
+    let v = value(z, p.kind);
     lo = min(lo, v);
     hi = max(hi, v);
     i += 256u * p.stride;

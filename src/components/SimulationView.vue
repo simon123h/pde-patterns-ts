@@ -70,7 +70,7 @@ function build() {
   solver.setDt(dt.value)
   solver.setDomain(domain.value)
   solver.reset()
-  renderer = new FieldRenderer(device, canvas.value, solver.physical, grid.nx, grid.ny)
+  renderer = new FieldRenderer(device, canvas.value, solver.physical, grid.nx, grid.ny, solver.real)
 }
 
 function resetSimulation() {

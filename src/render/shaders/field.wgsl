@@ -9,10 +9,14 @@ struct Params {
   height: f32,
   kind: u32, // 0 Re, 1 Im, 2 |.|, 3 arg
   diverging: u32, // 1: symmetric range centered on zero
+  real: u32, // 1: field is plain f32 instead of interleaved complex
+  pad2: u32,
+  pad3: u32,
+  pad4: u32,
 }
 
 @group(0) @binding(0) var<uniform> p: Params;
-@group(0) @binding(1) var<storage, read> field: array<vec2<f32>>;
+@group(0) @binding(1) var<storage, read> field: array<f32>;
 @group(0) @binding(2) var<storage, read> range: array<f32, 2>;
 // 256-entry RGBA tables, one per colormap
 @group(0) @binding(3) var<storage, read> palette: array<vec4<f32>>;
@@ -27,7 +31,11 @@ fn vs(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
 fn texel(ix: i32, iy: i32) -> vec2<f32> {
   let x = u32(((ix % i32(p.nx)) + i32(p.nx)) % i32(p.nx));
   let y = u32(((iy % i32(p.ny)) + i32(p.ny)) % i32(p.ny));
-  return field[p.offset + y * p.nx + x];
+  let idx = p.offset + y * p.nx + x;
+  if (p.real == 1u) {
+    return vec2<f32>(field[idx], 0.0);
+  }
+  return vec2<f32>(field[2u * idx], field[2u * idx + 1u]);
 }
 
 fn lookup(map: u32, t: f32) -> vec3<f32> {
