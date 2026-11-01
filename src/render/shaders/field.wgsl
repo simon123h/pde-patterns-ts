@@ -8,12 +8,14 @@ struct Params {
   width: f32,
   height: f32,
   kind: u32, // 0 Re, 1 Im, 2 |.|, 3 arg
-  pad1: u32,
+  diverging: u32, // 1: symmetric range centered on zero
 }
 
 @group(0) @binding(0) var<uniform> p: Params;
 @group(0) @binding(1) var<storage, read> field: array<vec2<f32>>;
 @group(0) @binding(2) var<storage, read> range: array<f32, 2>;
+// 256-entry RGBA tables, one per colormap
+@group(0) @binding(3) var<storage, read> palette: array<vec4<f32>>;
 
 @vertex
 fn vs(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
@@ -28,16 +30,11 @@ fn texel(ix: i32, iy: i32) -> vec2<f32> {
   return field[p.offset + y * p.nx + x];
 }
 
-// Matt Zucker's polynomial fit of matplotlib's viridis.
-fn viridis(t: f32) -> vec3<f32> {
-  let c0 = vec3<f32>(0.2777273272234177, 0.005407344544966578, 0.3340998053353061);
-  let c1 = vec3<f32>(0.1050930431085774, 1.404613529898575, 1.384590162594685);
-  let c2 = vec3<f32>(-0.3308618287255563, 0.214847559468213, 0.09509516302823659);
-  let c3 = vec3<f32>(-4.634230498983486, -5.799100973351585, -19.33244095627987);
-  let c4 = vec3<f32>(6.228269936347081, 14.17993336680509, 56.69055260068105);
-  let c5 = vec3<f32>(4.776384997670288, -13.74514537774601, -65.35303263337234);
-  let c6 = vec3<f32>(-5.435455855934631, 4.645852612178535, 26.3124352495832);
-  return clamp(c0 + t * (c1 + t * (c2 + t * (c3 + t * (c4 + t * (c5 + t * c6))))), vec3<f32>(0.0), vec3<f32>(1.0));
+fn lookup(map: u32, t: f32) -> vec3<f32> {
+  let x = t * 255.0;
+  let i = u32(floor(x));
+  let j = min(i + 1u, 255u);
+  return mix(palette[map * 256u + i].rgb, palette[map * 256u + j].rgb, x - floor(x));
 }
 
 fn value(v: vec2<f32>) -> f32 {
@@ -74,11 +71,13 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     lo = -3.14159265;
     hi = 3.14159265;
   }
-  let t = clamp((v - lo) / max(hi - lo, 1e-6), 0.0, 1.0);
-  var color = viridis(t);
-  if (p.colormap == 1u) {
-    color = vec3<f32>(t);
+  if (p.diverging == 1u) {
+    let m = max(abs(lo), abs(hi));
+    lo = -m;
+    hi = m;
   }
+  let t = clamp((v - lo) / max(hi - lo, 1e-6), 0.0, 1.0);
+  var color = lookup(p.colormap, t);
   if (p.kind == 3u) {
     color = cyclic(t);
   }

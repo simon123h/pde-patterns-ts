@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Render self-test</title>
+    <style>body { background: #0e1014; color: #d8dce6; font: 14px monospace; padding: 16px; }</style>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <script type="module">
+      import { runRenderSelfTest } from '/src/render/renderSelfTest.ts'
+      const out = document.getElementById('out')
+      const lines = []
+      const log = (l) => { lines.push(l); out.textContent = lines.join('\n') }
+      // `?report=<url>` posts the log to a collector (used for headless runs)
+      const target = new URLSearchParams(location.search).get('report')
+      const report = () => target && fetch(target, { method: 'POST', mode: 'no-cors', body: lines.join('\n') })
+      runRenderSelfTest(log)
+        .then((ok) => { log(ok ? 'ALL PASSED' : 'FAILED'); document.title = ok ? 'RENDER-OK' : 'RENDER-FAIL'; report() })
+        .catch((e) => { log('ERROR ' + e); document.title = 'RENDER-ERROR'; report() })
+    </script>
+  </body>
+</html>
