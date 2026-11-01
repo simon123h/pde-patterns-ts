@@ -11,5 +11,6 @@ export const swiftHohenberg: SpectralModel = {
   ],
   // In Fourier space ∇² → −k², so L = r − (1 − k²)²
   linearSymbol: (k2, _field, p) => p.r! - (1 - k2) ** 2,
-  nonlinearWgsl: 'return params.g * u * u - u * u * u;',
+  nonlinearWgsl: 'return params.g * u[0] * u[0] - u[0] * u[0] * u[0];',
+  noiseAmplitude: 0.1,
 }
