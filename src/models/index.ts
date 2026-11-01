@@ -6,6 +6,7 @@ import { grayScott } from './grayScott'
 import { kuramotoSivashinsky } from './kuramotoSivashinsky'
 import { nikolaevskiy } from './nikolaevskiy'
 import { swiftHohenberg } from './swiftHohenberg'
+import { thinFilm } from './thinFilm'
 import type { SpectralModel } from './types'
 
 export const models: SpectralModel[] = [
@@ -17,4 +18,5 @@ export const models: SpectralModel[] = [
   grayScott,
   brusselator,
   advectionDiffusion,
+  thinFilm,
 ]
