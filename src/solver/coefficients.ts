@@ -41,8 +41,10 @@ export function buildCoefficients(
         const my = signedIndex(ky, ny)
         const dealiased = Math.abs(mx) * 3 > nx || Math.abs(my) * 3 > ny
         const k2 = (mx * kUnitX) ** 2 + (my * kUnitY) ** 2
-        krogstadInto(c, model.linearSymbol(k2, field, params), model.linearSymbolImag?.(k2, field, params) ?? 0, h)
-        const mask = dealiased ? 0 : (model.nonlinearSymbol?.(k2, field, params) ?? 1)
+        const kxv = mx * kUnitX
+        const kyv = my * kUnitY
+        krogstadInto(c, model.linearSymbol(k2, field, params, kxv, kyv), model.linearSymbolImag?.(k2, field, params, kxv, kyv) ?? 0, h)
+        const mask = dealiased ? 0 : (model.nonlinearSymbol?.(k2, field, params, kxv, kyv) ?? 1)
         const g = field * M + kx * ny + ky
         for (let plane = 0; plane < COEFFICIENT_PLANES; plane++) {
           const scale = plane < 2 ? 1 : mask // E, E2 act on the state; the rest on N

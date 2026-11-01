@@ -92,9 +92,9 @@ export class SpectralSolver {
     this.stageState = buffer(bytes, STORAGE)
     this.nHat = [0, 1, 2, 3].map(() => buffer(bytes, STORAGE))
     this.coef = buffer(coefBytes, STORAGE)
-    this.paramBuffer = buffer(Math.max(16, Math.ceil(model.params.length / 4) * 16), UNIFORM)
+    this.paramBuffer = buffer(Math.ceil((model.params.length + 1) / 4) * 16, UNIFORM)
 
-    this.nonlinearPipeline = pipeline(nonlinearShader(model, this.cells))
+    this.nonlinearPipeline = pipeline(nonlinearShader(model, this.cells, gridSpec.nx))
     const nonlinearBuffers = [this.paramBuffer, this.physBuffer, this.physN]
     if (model.usesGradient) {
       const gradientPipeline = pipeline(gradientWgsl)
@@ -153,6 +153,7 @@ export class SpectralSolver {
     this.grid.dx = dx
     this.coefficientsDirty = true
     this.writeGradientUniform()
+    this.writeParams()
   }
 
   setParams(params: Record<string, number>): void {
@@ -223,8 +224,10 @@ export class SpectralSolver {
   }
 
   private writeParams(): void {
-    const values = new Float32Array(Math.max(4, Math.ceil(this.model.params.length / 4) * 4))
+    // model parameters followed by the grid spacing (see nonlinearShader)
+    const values = new Float32Array(Math.ceil((this.model.params.length + 1) / 4) * 4)
     this.model.params.forEach((p, i) => (values[i] = this.params[p.key]!))
+    values[this.model.params.length] = this.grid.dx
     this.device.queue.writeBuffer(this.paramBuffer, 0, values)
   }
 

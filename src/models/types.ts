@@ -49,19 +49,20 @@ export interface SpectralModel {
   dt: RangeSpec
   /** Sensible number of solver steps per animation frame. */
   stepsPerFrame: number
-  /** Real part of the linear symbol L(k²) of one field, with k² = kx² + ky². */
-  linearSymbol(k2: number, field: number, params: Record<string, number>): number
-  /** Imaginary part of the linear symbol (complex fields only). */
-  linearSymbolImag?(k2: number, field: number, params: Record<string, number>): number
-  /** Real Fourier-space multiplier M(k²) applied to the transformed nonlinearity (e.g. −k² for ∇²N). */
-  nonlinearSymbol?(k2: number, field: number, params: Record<string, number>): number
+  /** Real part of the linear symbol L of one field, with k² = kx² + ky² (kx, ky are the signed wavenumbers). */
+  linearSymbol(k2: number, field: number, params: Record<string, number>, kx: number, ky: number): number
+  /** Imaginary part of the linear symbol (complex fields, or odd-in-k terms such as drift). */
+  linearSymbolImag?(k2: number, field: number, params: Record<string, number>, kx: number, ky: number): number
+  /** Real Fourier-space multiplier M applied to the transformed nonlinearity (e.g. −k² for ∇²N). */
+  nonlinearSymbol?(k2: number, field: number, params: Record<string, number>, kx: number, ky: number): number
   /** Whether the nonlinearity needs the spatial gradients `ux`, `uy` (otherwise they are zero). */
   usesGradient?: boolean
   /**
    * WGSL body of
    *   fn nonlinear(u: array<vec2<f32>, FIELDS>, ux: array<vec2<f32>, FIELDS>,
-   *                uy: array<vec2<f32>, FIELDS>, f: u32) -> vec2<f32>
-   * returning N_f pointwise as (re, im). Parameters are available as `params.<key>` (f32).
+   *                uy: array<vec2<f32>, FIELDS>, xy: vec2<f32>, f: u32) -> vec2<f32>
+   * returning N_f pointwise as (re, im), where `xy` is the position in the domain, in [0, L)².
+   * Parameters are available as `params.<key>` (f32); `params.dx` is the grid spacing.
    */
   nonlinearWgsl: string
   views: ViewSpec[]

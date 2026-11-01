@@ -1,8 +1,10 @@
 import { requestGpu } from '../gpu/device'
+import { advectionDiffusion } from '../models/advectionDiffusion'
 import { brusselator } from '../models/brusselator'
 import { cahnHilliard } from '../models/cahnHilliard'
 import { ginzburgLandau } from '../models/ginzburgLandau'
 import { kuramotoSivashinsky } from '../models/kuramotoSivashinsky'
+import { nikolaevskiy } from '../models/nikolaevskiy'
 import { swiftHohenberg } from '../models/swiftHohenberg'
 import type { SpectralModel } from '../models/types'
 import { SpectralSolver } from './spectralSolver'
@@ -121,6 +123,31 @@ export async function runSolverSelfTest(log: (line: string) => void): Promise<bo
     const h = 0.01
     const { data } = await run(device, kuramotoSivashinsky, stripes(2, a), { nu: 1 }, h, 1)
     check('KS gradient nonlinearity (mean drift)', mean(data), -0.25 * a * a * k * k * h, 2e-2)
+  }
+  // Convection–diffusion, uniform drift only: cos(kx) translates by c t and decays as e^{−D k² t}
+  {
+    const D = 0.1
+    const cx = 1
+    const init = new Float32Array(2 * N * N)
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) init[2 * (y * N + x)] = 1e-3 * Math.cos((2 * Math.PI * 2 * x) / N)
+    const { data, time } = await run(device, advectionDiffusion, init, { D, cx, cy: 0, A: 0, n: 2 }, 0.1, 20)
+    const [re, im] = modeAmplitude(data, 2)
+    check('advection-diffusion decay e^{−Dk²t}', (2 * Math.hypot(re, im)) / 1e-3, Math.exp(-D * time), 2e-4)
+    check('advection-diffusion drift phase −c k t', Math.atan2(im, re), -cx * time, 1e-3)
+  }
+  // Convection–diffusion with the vortex flow: divergence-free, so ∫u is conserved
+  {
+    const init = new Float32Array(N * N)
+    for (let i = 0; i < init.length; i++) init[i] = 0.3 + 0.4 * Math.sin(i * 0.37) * Math.cos(i * 0.011)
+    let m0 = 0
+    for (const v of init) m0 += v
+    const { data } = await run(device, advectionDiffusion, init, { D: 0.05, cx: 0, cy: 0, A: 1, n: 2 }, 0.01, 20)
+    check('advection-diffusion mass conservation (vortex flow)', mean(data), m0 / init.length, 1e-4)
+  }
+  // Nikolaevskiy: L = k²[ε − (1 − k²)²], so the k = 1 mode grows at rate ε
+  {
+    const { data, time } = await run(device, nikolaevskiy, stripes(2, 1e-4), { eps: 0.3 }, 0.5, 10)
+    check('Nikolaevskiy critical mode growth e^{εt}', stripeAmplitude(data, 2) / 1e-4, Math.exp(0.3 * time), 2e-4)
   }
   // Complex Ginzburg–Landau: a small plane wave rotates, A ∝ e^{−iαt} for k = 1 (L = −iα)
   {

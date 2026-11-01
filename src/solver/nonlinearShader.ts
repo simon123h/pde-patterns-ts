@@ -1,11 +1,10 @@
 import type { SpectralModel } from '../models/types'
 
 /** Generates the pointwise-nonlinearity kernel: physN[f] = N_f(phys, ∇phys) for all fields. */
-export function nonlinearShader(model: SpectralModel, cells: number): string {
+export function nonlinearShader(model: SpectralModel, cells: number, nx: number): string {
   const fields = model.fields
-  const struct = model.params.length
-    ? model.params.map((p) => `  ${p.key}: f32,`).join('\n')
-    : '  unused: f32,'
+  // the grid spacing is appended after the model parameters
+  const struct = [...model.params.map((p) => p.key), 'dx'].map((key) => `  ${key}: f32,`).join('\n')
   const gradientBindings = model.usesGradient
     ? `@group(0) @binding(3) var<storage, read> physGx: array<vec2<f32>>;
 @group(0) @binding(4) var<storage, read> physGy: array<vec2<f32>>;`
@@ -26,8 +25,9 @@ ${gradientBindings}
 
 const NF: u32 = ${fields}u;
 const CELLS: u32 = ${cells}u;
+const NX: u32 = ${nx}u;
 
-fn nonlinear(u: array<vec2<f32>, ${fields}>, ux: array<vec2<f32>, ${fields}>, uy: array<vec2<f32>, ${fields}>, f: u32) -> vec2<f32> {
+fn nonlinear(u: array<vec2<f32>, ${fields}>, ux: array<vec2<f32>, ${fields}>, uy: array<vec2<f32>, ${fields}>, xy: vec2<f32>, f: u32) -> vec2<f32> {
   ${model.nonlinearWgsl}
 }
 
@@ -38,6 +38,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (i >= CELLS) {
     return;
   }
+  let xy = vec2<f32>(f32(i % NX), f32(i / NX)) * params.dx;
   var u: array<vec2<f32>, ${fields}>;
   var ux: array<vec2<f32>, ${fields}>;
   var uy: array<vec2<f32>, ${fields}>;
@@ -46,7 +47,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     ${gradientLoad}
   }
   for (var f = 0u; f < NF; f++) {
-    physN[f * CELLS + i] = nonlinear(u, ux, uy, f);
+    physN[f * CELLS + i] = nonlinear(u, ux, uy, xy, f);
   }
 }
 `
