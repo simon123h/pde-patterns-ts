@@ -41,6 +41,18 @@ describe.each(models)('settings of $id', (model) => {
   })
 })
 
+describe('color range settings', () => {
+  const model = models[0]!
+  it('keeps a valid fixed range', () => {
+    const result = sanitizeModelSettings(model, { rangeMode: 'manual', rangeLo: -2, rangeHi: 5 })
+    expect(result).toMatchObject({ rangeMode: 'manual', rangeLo: -2, rangeHi: 5 })
+  })
+  it('ignores an inverted or invalid range and an unknown mode', () => {
+    const result = sanitizeModelSettings(model, { rangeMode: 'sometimes', rangeLo: 3, rangeHi: 1 })
+    expect(result).toMatchObject({ rangeMode: 'auto', rangeLo: 0, rangeHi: 1 })
+  })
+})
+
 describe('stored settings', () => {
   it('round-trips', () => {
     const storage = fakeStorage()
