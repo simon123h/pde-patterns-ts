@@ -40,7 +40,12 @@ const chrome = spawn(process.env.CHROME ?? 'google-chrome', [
   '--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--no-first-run',
   '--enable-unsafe-webgpu', '--enable-unsafe-swiftshader',
   `--remote-debugging-port=${debugPort}`, `--user-data-dir=${profile}`, 'about:blank',
-], { stdio: 'ignore' })
+], { stdio: ['ignore', 'ignore', 'pipe'] })
+// chrome's own error output, shown if it does not start
+let chromeErrors = ''
+chrome.stderr.on('data', (chunk) => (chromeErrors = (chromeErrors + chunk).slice(-2000)))
+let chromeExit = null
+chrome.on('exit', (code, signal) => (chromeExit = signal ?? code))
 
 let failed = false
 // a killed run (timeout, ctrl-c) must not leave chrome or the dev server behind
@@ -48,8 +53,13 @@ const abort = () => { chrome.kill('SIGKILL'); process.exit(130) }
 process.on('SIGTERM', abort)
 process.on('SIGINT', abort)
 try {
+  // many jobs start at once on a CI runner, so give chrome up to a minute to open its debugging port
   for (let i = 0; ; i++) {
-    try { await devtools('/json/version'); break } catch { if (i > 50) throw new Error('chrome did not start'); await sleep(200) }
+    try { await devtools('/json/version'); break } catch {
+      if (chromeExit !== null) throw new Error(`chrome exited at start-up (${chromeExit}): ${chromeErrors}`)
+      if (i > 300) throw new Error(`chrome did not start within 60 s: ${chromeErrors}`)
+      await sleep(200)
+    }
   }
   for (const name of names) {
     const [page, group] = name.split(':')
