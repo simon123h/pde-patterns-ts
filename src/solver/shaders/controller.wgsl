@@ -1,9 +1,15 @@
 // Step-size controller. Reduces the per-workgroup error sums written by the final combine stage,
 // decides whether the step is accepted and picks the next step size, entirely on the GPU.
 // The error estimate is the difference between the 4th-order result and the (2nd-order) third
-// stage, so the local error scales like h³ and the update uses the exponent 1/3.
+// stage, so the local error scales like h³ (order k = 3).
 //
-// ctl layout: 0 h, 1 t, 2 accepted (1/0), 3 error, 4 accepted steps, 5 rejected steps.
+// The new step size comes from a PI controller (Gustafsson): with e = err/tol and e₋ the same ratio
+// of the previous accepted step,  factor = safety · e^(−0.7/k) · e₋^(0.4/k).  The memory term damps the
+// oscillation of the plain controller (factor = e^(−1/k)) between accepted and rejected steps.
+// After a rejection the plain exponent −1/k is used instead, to shrink faster.
+//
+// ctl layout: 0 h, 1 t, 2 accepted (1/0), 3 error, 4 accepted steps, 5 rejected steps,
+// 6 error of the previous accepted step (0: none yet), 7 unused.
 
 struct Params {
   count: u32, // number of partial sums
@@ -52,7 +58,16 @@ fn main(@builtin(local_invocation_index) li: u32) {
   let accept = ok || h <= p.hmin * 1.0001;
   var factor = 0.2;
   if (err < 1e30) {
-    factor = clamp(p.safety * pow(max(err / p.tol, 1e-3), -1.0 / 3.0), 0.2, 2.0);
+    let e = max(err / p.tol, 1e-3);
+    var previous = e; // without history the memory term just weakens the response
+    if (accept && ctl[6] > 0.0) {
+      previous = max(ctl[6] / p.tol, 1e-3);
+    }
+    factor = clamp(p.safety * pow(e, -0.7 / 3.0) * pow(previous, 0.4 / 3.0), 0.2, 2.0);
+    if (!ok) {
+      // a rejected step is retried with the plain controller, which shrinks faster
+      factor = clamp(p.safety * pow(e, -1.0 / 3.0), 0.2, 2.0);
+    }
   }
   if (!ok) {
     factor = min(factor, 0.9);
@@ -65,6 +80,7 @@ fn main(@builtin(local_invocation_index) li: u32) {
   if (accept) {
     ctl[1] = ctl[1] + h;
     ctl[4] = ctl[4] + 1.0;
+    ctl[6] = select(0.0, err, err < 1e30);
   } else {
     ctl[5] = ctl[5] + 1.0;
   }
