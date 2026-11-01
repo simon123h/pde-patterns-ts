@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { krogstadStep, phiContour, phiFunctions } from '../src/math/etd'
+import { KROGSTAD_FLOATS, krogstadCoefficients, krogstadInto, krogstadStep, phiComplexInto, phiContour, phiFunctions } from '../src/math/etd'
 
 describe('phi functions', () => {
   it('matches the z → 0 limits 1, 1/2, 1/6', () => {
@@ -77,5 +77,84 @@ describe('krogstad ETDRK4', () => {
     const N = (u: number) => Math.cos(u)
     const exact = reference(0.1, -500, N, 1)
     expect(Math.abs(run(0.1, -500, N, 1, 10) - exact)).toBeLessThan(1e-3)
+  })
+})
+
+describe('complex coefficients', () => {
+  it('reduce to the real ones for a real symbol', () => {
+    const out = new Float64Array(KROGSTAD_FLOATS)
+    for (const L of [-300, -3, -0.4, 0, 0.2]) {
+      krogstadInto(out, L, 0, 0.3)
+      const r = krogstadCoefficients(L, 0.3)
+      const real = [r.E, r.E2, r.A1, r.B2, r.C1, r.C2, r.F1, r.F2, r.F3]
+      real.forEach((v, i) => {
+        expect(out[2 * i]).toBeCloseTo(v, 12)
+        expect(out[2 * i + 1]).toBe(0)
+      })
+    }
+  })
+
+  it('has matching phi values across the |z| = 1 switch', () => {
+    const below = new Float64Array(6)
+    const above = new Float64Array(6)
+    phiComplexInto(0.6, 0.79, below) // |z| ≈ 0.992
+    phiComplexInto(0.6, 0.81, above) // |z| ≈ 1.008
+    for (let i = 0; i < 6; i++) expect(Math.abs(below[i]! - above[i]!)).toBeLessThan(0.05)
+    // direct check against the closed form for a complex z
+    const z = [-0.7, 2.1]
+    const out = new Float64Array(6)
+    phiComplexInto(z[0]!, z[1]!, out)
+    const ex = Math.exp(z[0]!)
+    const emr = ex * Math.cos(z[1]!) - 1
+    const emi = ex * Math.sin(z[1]!)
+    const d = z[0]! ** 2 + z[1]! ** 2
+    expect(out[0]).toBeCloseTo((emr * z[0]! + emi * z[1]!) / d, 12)
+    expect(out[1]).toBeCloseTo((emi * z[0]! - emr * z[1]!) / d, 12)
+  })
+
+  it('integrates a complex scalar ODE with 4th order', () => {
+    // u' = L u + N(u), L = −1 + 3i, N = −(1 + 0.5i)|u|² u
+    const Lr = -1
+    const Li = 3
+    const N = (r: number, i: number): [number, number] => {
+      const m = r * r + i * i
+      return [-m * (r - 0.5 * i), -m * (i + 0.5 * r)]
+    }
+    const f = (r: number, i: number): [number, number] => {
+      const n = N(r, i)
+      return [Lr * r - Li * i + n[0], Lr * i + Li * r + n[1]]
+    }
+    let [rr, ri] = [0.8, 0.3]
+    const S = 100000
+    const hh = 1 / S
+    for (let s = 0; s < S; s++) {
+      const k1 = f(rr, ri)
+      const k2 = f(rr + (hh / 2) * k1[0], ri + (hh / 2) * k1[1])
+      const k3 = f(rr + (hh / 2) * k2[0], ri + (hh / 2) * k2[1])
+      const k4 = f(rr + hh * k3[0], ri + hh * k3[1])
+      rr += (hh / 6) * (k1[0] + 2 * k2[0] + 2 * k3[0] + k4[0])
+      ri += (hh / 6) * (k1[1] + 2 * k2[1] + 2 * k3[1] + k4[1])
+    }
+    const cm = (a: number, b: number, c: number, d: number): [number, number] => [a * c - b * d, a * d + b * c]
+    const run = (n: number) => {
+      const h = 1 / n
+      const c = new Float64Array(KROGSTAD_FLOATS)
+      krogstadInto(c, Lr, Li, h)
+      const k = (j: number): [number, number] => [c[2 * j]!, c[2 * j + 1]!]
+      const add = (...v: [number, number][]): [number, number] => v.reduce((s, t) => [s[0] + t[0], s[1] + t[1]], [0, 0])
+      let u: [number, number] = [0.8, 0.3]
+      for (let s = 0; s < n; s++) {
+        const Nn = N(...u)
+        const a = add(cm(...k(1), ...u), cm(...k(2), ...Nn))
+        const Na = N(...a)
+        const b = add(cm(...k(1), ...u), cm(...k(2), ...Nn), cm(...k(3), Na[0] - Nn[0], Na[1] - Nn[1]))
+        const Nb = N(...b)
+        const cc = add(cm(...k(0), ...u), cm(...k(4), ...Nn), cm(...k(5), Nb[0] - Nn[0], Nb[1] - Nn[1]))
+        const Nc = N(...cc)
+        u = add(cm(...k(0), ...u), cm(...k(6), ...Nn), cm(...k(7), Na[0] + Nb[0], Na[1] + Nb[1]), cm(...k(8), ...Nc))
+      }
+      return Math.hypot(u[0] - rr, u[1] - ri)
+    }
+    expect(Math.log2(run(64) / run(128))).toBeGreaterThan(3.6)
   })
 })

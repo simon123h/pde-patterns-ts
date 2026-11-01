@@ -134,3 +134,114 @@ export function krogstadStep(u: number, L: number, h: number, N: (u: number) => 
   const Nc = N(cc)
   return c.E * u + c.F1 * Nn + c.F2 * (Na + Nb) + c.F3 * Nc
 }
+
+/**
+ * φ1..φ3 at complex z = zr + i·zi, written to `out` as [φ1.re, φ1.im, φ2.re, φ2.im, φ3.re, φ3.im].
+ * Taylor series for |z| < 1, the recurrence φ_{j+1} = (φ_j − 1/j!)/z beyond.
+ */
+export function phiComplexInto(zr: number, zi: number, out: Float64Array): void {
+  if (zi === 0) {
+    const p = phiFunctions(zr)
+    out[0] = p.phi1
+    out[1] = 0
+    out[2] = p.phi2
+    out[3] = 0
+    out[4] = p.phi3
+    out[5] = 0
+    return
+  }
+  const d = zr * zr + zi * zi
+  if (d >= 1) {
+    const ex = Math.exp(zr)
+    const emr = ex * Math.cos(zi) - 1
+    const emi = ex * Math.sin(zi)
+    const ir = zr / d // 1/z
+    const ii = -zi / d
+    const p1r = emr * ir - emi * ii
+    const p1i = emr * ii + emi * ir
+    const t2r = p1r - 1
+    const p2r = t2r * ir - p1i * ii
+    const p2i = t2r * ii + p1i * ir
+    const t3r = p2r - 0.5
+    out[0] = p1r
+    out[1] = p1i
+    out[2] = p2r
+    out[3] = p2i
+    out[4] = t3r * ir - p2i * ii
+    out[5] = t3r * ii + p2i * ir
+    return
+  }
+  let t1r = 1
+  let t1i = 0
+  let t2r = 1 / 2
+  let t2i = 0
+  let t3r = 1 / 6
+  let t3i = 0
+  let s1r = t1r
+  let s1i = 0
+  let s2r = t2r
+  let s2i = 0
+  let s3r = t3r
+  let s3i = 0
+  for (let k = 1; k < 20; k++) {
+    let f = 1 / (k + 1)
+    let nr = (t1r * zr - t1i * zi) * f
+    t1i = (t1r * zi + t1i * zr) * f
+    t1r = nr
+    f = 1 / (k + 2)
+    nr = (t2r * zr - t2i * zi) * f
+    t2i = (t2r * zi + t2i * zr) * f
+    t2r = nr
+    f = 1 / (k + 3)
+    nr = (t3r * zr - t3i * zi) * f
+    t3i = (t3r * zi + t3i * zr) * f
+    t3r = nr
+    s1r += t1r
+    s1i += t1i
+    s2r += t2r
+    s2i += t2i
+    s3r += t3r
+    s3i += t3i
+  }
+  out[0] = s1r
+  out[1] = s1i
+  out[2] = s2r
+  out[3] = s2i
+  out[4] = s3r
+  out[5] = s3i
+}
+
+/** Number of floats `krogstadInto` writes: 9 complex coefficients in the order of KrogstadCoefficients. */
+export const KROGSTAD_FLOATS = 18
+
+const phiFull = new Float64Array(6)
+const phiHalf = new Float64Array(6)
+
+/**
+ * Krogstad ETDRK4 coefficients for a mode with complex linear symbol L = lr + i·li, written to
+ * `out` as interleaved (re, im) pairs: E, E2, A1, B2, C1, C2, F1, F2, F3.
+ */
+export function krogstadInto(out: Float64Array, lr: number, li: number, h: number): void {
+  const zr = h * lr
+  const zi = h * li
+  phiComplexInto(zr, zi, phiFull)
+  phiComplexInto(zr / 2, zi / 2, phiHalf)
+  const e = Math.exp(zr)
+  const e2 = Math.exp(zr / 2)
+  out[0] = e * Math.cos(zi)
+  out[1] = e * Math.sin(zi)
+  out[2] = e2 * Math.cos(zi / 2)
+  out[3] = e2 * Math.sin(zi / 2)
+  for (let c = 0; c < 2; c++) {
+    const p1 = phiFull[c]!
+    const p2 = phiFull[2 + c]!
+    const p3 = phiFull[4 + c]!
+    out[4 + c] = (h / 2) * phiHalf[c]!
+    out[6 + c] = h * phiHalf[2 + c]!
+    out[8 + c] = h * p1
+    out[10 + c] = 2 * h * p2
+    out[12 + c] = h * (p1 - 3 * p2 + 4 * p3)
+    out[14 + c] = 2 * h * (p2 - 2 * p3)
+    out[16 + c] = h * (4 * p3 - p2)
+  }
+}
