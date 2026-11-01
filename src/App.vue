@@ -10,7 +10,9 @@ onMounted(async () => {
   try {
     const { adapter } = await requestGpu()
     const info = adapter.info
-    status.value = `WebGPU ready: ${info.vendor} ${info.architecture}`.trim()
+    // Firefox hides adapter details (fingerprinting protection), so these may be empty.
+    const label = `${info.vendor} ${info.architecture}`.trim()
+    status.value = `WebGPU ready${label ? `: ${label}` : ' (adapter details hidden by the browser)'}`
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   }
