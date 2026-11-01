@@ -15,16 +15,17 @@ var<workgroup> tile: array<array<vec2<f32>, 17>, 16>;
 
 @compute @workgroup_size(16, 16)
 fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {
+  let off = wid.z * p.rows * p.cols; // batched fields are stored back to back
   let c = wid.x * 16u + lid.x;
   let r = wid.y * 16u + lid.y;
   if (r < p.rows && c < p.cols) {
-    tile[lid.y][lid.x] = src[r * p.cols + c];
+    tile[lid.y][lid.x] = src[off + r * p.cols + c];
   }
   workgroupBarrier();
 
   let orow = wid.x * 16u + lid.y;
   let ocol = wid.y * 16u + lid.x;
   if (orow < p.cols && ocol < p.rows) {
-    dst[orow * p.rows + ocol] = tile[lid.x][lid.y];
+    dst[off + orow * p.rows + ocol] = tile[lid.x][lid.y];
   }
 }

@@ -6,7 +6,7 @@ const MAX_ROW_LENGTH = 2048 // 2048 vec2<f32> = 16 KiB, the default workgroup-st
 interface Pass {
   pipeline: GPUComputePipeline
   bindGroup: GPUBindGroup
-  workgroups: [number, number]
+  workgroups: [number, number, number]
 }
 
 /**
@@ -18,6 +18,8 @@ interface Pass {
  *
  * Leaving the spectrum transposed saves two transposes per step; pointwise operations in
  * Fourier space only need to map the index back to (kx, ky) accordingly.
+ *
+ * With `batch` > 1, `batch` fields are transformed at once (field f at element offset f·nx·ny).
  *
  * `inverse` includes the 1/(nx·ny) normalization. `src` and `dst` must be different buffers
  * (both need STORAGE usage); `src` is left untouched.
@@ -35,6 +37,8 @@ export class Fft2D {
     private readonly device: GPUDevice,
     readonly nx: number,
     readonly ny: number,
+    /** Number of independent nx × ny fields stored back to back in each buffer. */
+    readonly batch = 1,
   ) {
     const maxLen = Math.min(MAX_ROW_LENGTH, device.limits.maxComputeWorkgroupStorageSize / 8)
     for (const n of [nx, ny]) {
@@ -44,7 +48,7 @@ export class Fft2D {
     this.rowPipeline = this.pipeline(rowFftWgsl)
     this.transposePipeline = this.pipeline(transposeWgsl)
     this.scratch = this.track(
-      device.createBuffer({ size: nx * ny * 8, usage: GPUBufferUsage.STORAGE }),
+      device.createBuffer({ size: batch * nx * ny * 8, usage: GPUBufferUsage.STORAGE }),
     )
     this.twX = this.twiddles(nx)
     this.twY = nx === ny ? this.twX : this.twiddles(ny)
@@ -76,7 +80,7 @@ export class Fft2D {
     for (const p of passes.slice(key * 3, key * 3 + 3)) {
       pass.setPipeline(p.pipeline)
       pass.setBindGroup(0, p.bindGroup)
-      pass.dispatchWorkgroups(p.workgroups[0], p.workgroups[1])
+      pass.dispatchWorkgroups(...p.workgroups)
     }
     pass.end()
   }
@@ -113,13 +117,13 @@ export class Fft2D {
       })
 
     return [
-      { pipeline: this.rowPipeline, bindGroup: bind(this.rowPipeline, [rowParams(n1, r1, 1), src, dst, tw1]), workgroups: [r1, 1] },
+      { pipeline: this.rowPipeline, bindGroup: bind(this.rowPipeline, [rowParams(n1, r1, 1), src, dst, tw1]), workgroups: [r1 * this.batch, 1, 1] },
       {
         pipeline: this.transposePipeline,
         bindGroup: bind(this.transposePipeline, [transposeParams, dst, this.scratch]),
-        workgroups: [Math.ceil(n1 / 16), Math.ceil(r1 / 16)],
+        workgroups: [Math.ceil(n1 / 16), Math.ceil(r1 / 16), this.batch],
       },
-      { pipeline: this.rowPipeline, bindGroup: bind(this.rowPipeline, [rowParams(n2, r2, norm), this.scratch, dst, tw2]), workgroups: [r2, 1] },
+      { pipeline: this.rowPipeline, bindGroup: bind(this.rowPipeline, [rowParams(n2, r2, norm), this.scratch, dst, tw2]), workgroups: [r2 * this.batch, 1, 1] },
     ]
   }
 
