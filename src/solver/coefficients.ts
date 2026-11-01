@@ -1,4 +1,4 @@
-import { krogstadCoefficients } from '../math/etd'
+import { KROGSTAD_FLOATS, krogstadInto } from '../math/etd'
 import type { SpectralModel } from '../models/types'
 
 export interface GridSpec {
@@ -8,7 +8,7 @@ export interface GridSpec {
   dx: number
 }
 
-/** Number of coefficient planes per field: E, E2, A1, B2, C1, C2, F1, F2, F3. */
+/** Number of complex coefficient planes per field: E, E2, A1, B2, C1, C2, F1, F2, F3. */
 export const COEFFICIENT_PLANES = 9
 
 /** Signed integer wavenumber index of FFT bin i of n. */
@@ -16,8 +16,9 @@ const signedIndex = (i: number, n: number) => (i < n / 2 ? i : i - n)
 
 /**
  * Per-mode ETDRK4 coefficients in the GPU's spectral layout (index = field·M + kx·ny + ky,
- * M = nx·ny), stored as COEFFICIENT_PLANES consecutive planes of fields·M floats.
- * Modes outside the 2/3 dealiasing box have their nonlinear coefficients zeroed.
+ * M = nx·ny), stored as COEFFICIENT_PLANES consecutive planes of fields·M complex numbers
+ * (interleaved re, im). The coefficients that multiply the nonlinear terms (A1…F3) include the
+ * model's Fourier-space multiplier and are zeroed outside the 2/3 dealiasing box.
  */
 export function buildCoefficients(
   model: SpectralModel,
@@ -28,9 +29,10 @@ export function buildCoefficients(
   const { nx, ny, dx } = grid
   const M = nx * ny
   const total = model.fields * M
-  const out = new Float32Array(COEFFICIENT_PLANES * total)
+  const out = new Float32Array(2 * COEFFICIENT_PLANES * total)
   const kUnitX = (2 * Math.PI) / (nx * dx)
   const kUnitY = (2 * Math.PI) / (ny * dx)
+  const c = new Float64Array(KROGSTAD_FLOATS)
 
   for (let field = 0; field < model.fields; field++) {
     for (let kx = 0; kx < nx; kx++) {
@@ -39,18 +41,15 @@ export function buildCoefficients(
         const my = signedIndex(ky, ny)
         const dealiased = Math.abs(mx) * 3 > nx || Math.abs(my) * 3 > ny
         const k2 = (mx * kUnitX) ** 2 + (my * kUnitY) ** 2
-        const c = krogstadCoefficients(model.linearSymbol(k2, field, params), h)
+        krogstadInto(c, model.linearSymbol(k2, field, params), model.linearSymbolImag?.(k2, field, params) ?? 0, h)
+        const mask = dealiased ? 0 : (model.nonlinearSymbol?.(k2, field, params) ?? 1)
         const g = field * M + kx * ny + ky
-        const mask = dealiased ? 0 : 1
-        out[0 * total + g] = c.E
-        out[1 * total + g] = c.E2
-        out[2 * total + g] = c.A1 * mask
-        out[3 * total + g] = c.B2 * mask
-        out[4 * total + g] = c.C1 * mask
-        out[5 * total + g] = c.C2 * mask
-        out[6 * total + g] = c.F1 * mask
-        out[7 * total + g] = c.F2 * mask
-        out[8 * total + g] = c.F3 * mask
+        for (let plane = 0; plane < COEFFICIENT_PLANES; plane++) {
+          const scale = plane < 2 ? 1 : mask // E, E2 act on the state; the rest on N
+          const o = 2 * (plane * total + g)
+          out[o] = c[2 * plane]! * scale
+          out[o + 1] = c[2 * plane + 1]! * scale
+        }
       }
     }
   }
