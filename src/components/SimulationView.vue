@@ -6,6 +6,7 @@ import type { SpectralModel } from '../models/types'
 import { COLORMAPS } from '../render/colormaps'
 import { FieldRenderer } from '../render/fieldRenderer'
 import { MAX_STAMPS, SpectralSolver } from '../solver/spectralSolver'
+import { defaultModelSettings, loadSettings, sanitizeModelSettings, saveSettings, type ModelSettings } from '../settings'
 import StatsReadout from './StatsReadout.vue'
 
 const GRID_SIZES = [64, 128, 256, 512, 1024]
@@ -14,20 +15,27 @@ const canvas = ref<HTMLCanvasElement | null>(null)
 const error = ref<string | null>(null)
 const adapterLabel = ref('')
 
-const model = shallowRef<SpectralModel>(models[0]!)
-// `?grid=64` selects the initial grid size (handy on slow software adapters)
+// settings are remembered in localStorage: per equation (parameters, dt, domain, ...) and globally
+const stored = loadSettings()
+const model = shallowRef<SpectralModel>(models.find((m) => m.id === stored.global.model) ?? models[0]!)
+// `?grid=64` selects the initial grid size (handy on slow software adapters) and overrides the stored one
 const requestedGrid = Number(new URLSearchParams(location.search).get('grid'))
-const gridSize = ref(GRID_SIZES.includes(requestedGrid) || requestedGrid === 64 ? requestedGrid : 256)
-const dt = ref(model.value.dt.default)
-const domain = ref(model.value.domain.default)
-const stepsPerFrame = ref(model.value.stepsPerFrame)
+const storedGrid = Number(stored.global.gridSize)
+const gridSize = ref(
+  GRID_SIZES.includes(requestedGrid) || requestedGrid === 64
+    ? requestedGrid
+    : GRID_SIZES.includes(storedGrid) ? storedGrid : 256,
+)
+const dt = ref(0)
+const domain = ref(0)
+const stepsPerFrame = ref(1)
 const viewIndex = ref(0)
 const adaptive = ref(false)
 const toleranceExp = ref(-3) // error tolerance = 10^toleranceExp
-const maxDt = ref(model.value.dt.max)
-const colormap = ref('viridis')
+const maxDt = ref(0)
+const colormap = ref(COLORMAPS.some((c) => c.id === stored.global.colormap) ? (stored.global.colormap as string) : 'viridis')
 const brushSize = ref(3) // percent of the domain length
-const brushStrength = ref(1)
+const brushStrength = ref(Number.isFinite(stored.global.brushStrength) ? Math.min(Math.max(stored.global.brushStrength!, 0.1), 5) : 1)
 const running = ref(true)
 const params = reactive<Record<string, number>>({})
 const stats = reactive({ fps: 0, time: 0, dt: 0, accepted: 0, rejected: 0 })
@@ -50,17 +58,59 @@ let pendingStamps: number[] = []
 let lastPaint: { x: number; y: number } | null = null
 let inFlight = 0 // submitted frames the GPU hasn't finished; limits queue build-up on slow adapters
 
-function loadModelDefaults() {
-  const m = model.value
+function applySettings(settings: ModelSettings) {
   for (const key of Object.keys(params)) delete params[key]
-  for (const p of m.params) params[p.key] = p.default
-  dt.value = m.dt.default
-  maxDt.value = m.dt.max
-  domain.value = m.domain.default
-  stepsPerFrame.value = m.stepsPerFrame
-  viewIndex.value = 0
-  brushSize.value = (m.paint?.sigma ?? 0.03) * 100
+  Object.assign(params, settings.params)
+  dt.value = settings.dt
+  maxDt.value = settings.maxDt
+  domain.value = settings.domain
+  stepsPerFrame.value = settings.stepsPerFrame
+  viewIndex.value = settings.viewIndex
+  adaptive.value = settings.adaptive
+  toleranceExp.value = settings.toleranceExp
+  brushSize.value = settings.brushSize
 }
+
+/** The stored settings of the current model (the defaults for values that were never stored). */
+function loadModelSettings() {
+  applySettings(sanitizeModelSettings(model.value, stored.models[model.value.id]))
+}
+
+/** Forget the stored settings of the current model and restart with its defaults. */
+function resetToDefaults() {
+  delete stored.models[model.value.id]
+  applySettings(defaultModelSettings(model.value))
+  resetSimulation()
+}
+
+function currentSettings(): ModelSettings {
+  return {
+    params: { ...params },
+    dt: dt.value,
+    maxDt: maxDt.value,
+    domain: domain.value,
+    stepsPerFrame: stepsPerFrame.value,
+    viewIndex: viewIndex.value,
+    adaptive: adaptive.value,
+    toleranceExp: toleranceExp.value,
+    brushSize: brushSize.value,
+  }
+}
+
+let saveTimer = 0
+function persist() {
+  clearTimeout(saveTimer)
+  stored.models[model.value.id] = currentSettings()
+  // a grid size forced through ?grid= is not remembered
+  const grid = requestedGrid ? stored.global.gridSize : gridSize.value
+  stored.global = { model: model.value.id, gridSize: grid, colormap: colormap.value, brushStrength: brushStrength.value }
+  saveSettings(stored)
+}
+function persistSoon() {
+  clearTimeout(saveTimer)
+  saveTimer = window.setTimeout(persist, 300)
+}
+loadModelSettings()
 
 /** Applies a preset of the current model; settings it leaves out keep their value. */
 function applyPreset(index: number) {
@@ -72,8 +122,10 @@ function applyPreset(index: number) {
 }
 
 function selectModel(id: string) {
+  persist() // the model that is left
   model.value = models.find((m) => m.id === id)!
-  loadModelDefaults()
+  loadModelSettings()
+  persist()
   build()
 }
 
@@ -182,7 +234,7 @@ function frame(now: number) {
 }
 
 onMounted(async () => {
-  loadModelDefaults()
+  window.addEventListener('pagehide', persist)
   try {
     const gpu = await requestGpu()
     device = gpu.device
@@ -204,6 +256,8 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('pagehide', persist)
+  persist()
   cancelAnimationFrame(raf)
   clearInterval(statsTimer)
   solver?.destroy()
@@ -211,6 +265,7 @@ onBeforeUnmount(() => {
 })
 
 watch(gridSize, build)
+watch([params, dt, maxDt, domain, stepsPerFrame, viewIndex, adaptive, toleranceExp, brushSize, brushStrength, colormap, gridSize], persistSoon, { deep: true })
 watch(dt, (v) => solver?.setDt(v))
 watch(domain, (v) => solver?.setDomain(v))
 watch([adaptive, toleranceExp, maxDt], applyAdaptive)
@@ -329,6 +384,7 @@ watch(
       <div class="buttons">
         <button @click="running = !running">{{ running ? 'Pause' : 'Run' }}</button>
         <button @click="resetSimulation">Reset</button>
+        <button title="Forget the saved settings of this equation and use its defaults" @click="resetToDefaults">Reset to defaults</button>
       </div>
     </aside>
   </div>
