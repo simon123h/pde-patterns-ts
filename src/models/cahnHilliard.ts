@@ -21,6 +21,10 @@ export const cahnHilliard = defineModel(
     dt: { default: 0.2, min: 0.01, max: 5, step: 0.01 },
     stepsPerFrame: 2,
     paint: { amounts: [0.5], sigma: 0.03 },
+    presets: [
+      { name: 'Symmetric (bicontinuous)', description: 'Equal amounts of both phases: interwoven domains that coarsen.', params: { mean: 0 } },
+      { name: 'Droplets', description: 'Off-critical mixture: the minority phase forms droplets.', params: { mean: 0.5 } },
+    ],
     views: [{ label: 'u', field: 0, kind: 're' }],
   },
   {
