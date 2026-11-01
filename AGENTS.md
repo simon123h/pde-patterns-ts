@@ -42,3 +42,14 @@ done headlessly: say so instead of claiming them verified. On Linux, real WebGPU
   cleans up after itself; stop anything else you start, by port or pid file, not with `pkill -f`.
 - Adding an equation: see "Adding a model" in the README. `defineModel` validates the model and
   the generic tests cover it, so a new model needs no test code of its own.
+
+## Issues
+
+- Every issue gets a type label (`bug` or `enhancement`) and one or more area labels: `solver`
+  (time stepping, FFT, kernels), `model` (equations), `presets`, `ui`, `performance`, `numerics`
+  (accuracy, error control), `continuation`, `infrastructure` (CI, hosting, browser support). `idea`
+  marks something not yet specified, `deferred` something waiting for a prerequisite.
+- Related issues are linked as sub-issues of an umbrella issue (#15 path continuation, #10 new
+  equations); mention other related issues by number in a comment so the link shows up on both.
+- Pull requests say `Closes #n` only if the issue is fully done, otherwise `Refs #n`, and the issue
+  gets a status comment or a checklist with what is left.
