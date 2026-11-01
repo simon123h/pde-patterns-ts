@@ -16,6 +16,7 @@ time integration (ETDRK4), written in TypeScript with a Vue 3 front end.
 | Gray–Scott | u,v reaction–diffusion | spots, worms, mitosis, chaos |
 | Brusselator | u,v reaction–diffusion | Turing and Hopf instabilities |
 | Convection–diffusion | ∂ₜu + v·∇u = D∇²u | uniform drift + n×n vortex flow |
+| Thin film | ∂ₜh = ∇·(h³∇p), p = −∇²h + h⁻³ − h⁻⁶ | spinodal dewetting into droplets on a precursor film, conserves ∫h |
 
 All models run on a periodic square domain whose side length `L` is a parameter (the grid
 spacing is `dx = L/n`).
@@ -104,7 +105,7 @@ src/
   gpu/          device setup, complex and real-to-complex 2D FFTs (WGSL) and their self-test
   math/         CPU reference FFT, φ-functions and ETDRK4 coefficients (f64)
   models/       one file per PDE + the model interface (types.ts)
-  solver/       SpectralSolver, coefficient builder, WGSL kernels (combine, gradient, brush,
+  solver/       SpectralSolver, coefficient builder, WGSL kernels (combine, spectral derivatives, brush,
                 nonlinearity, GPU coefficients, step-size controller)
   render/       FieldRenderer, colormaps and shaders
   components/   Vue UI

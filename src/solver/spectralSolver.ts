@@ -6,7 +6,7 @@ import coefficientsWgsl from './shaders/coefficients.wgsl?raw'
 import combineWgsl from './shaders/combine.wgsl?raw'
 import commitWgsl from './shaders/commit.wgsl?raw'
 import controllerWgsl from './shaders/controller.wgsl?raw'
-import gradientWgsl from './shaders/gradient.wgsl?raw'
+import { derivativeCount, derivativeShader } from './derivativeShader'
 import paintWgsl from './shaders/paint.wgsl?raw'
 import { buildCoefficients, buildSymbols, COEFFICIENT_PLANES, spectralModes, type GridSpec } from './coefficients'
 import { nonlinearShader } from './nonlinearShader'
@@ -77,14 +77,13 @@ export class SpectralSolver {
   private readonly combinePipeline: GPUComputePipeline
   private readonly combineBinds: GPUBindGroup[]
   private readonly combineAdaptiveBind: GPUBindGroup
-  private readonly gradient?: {
+  /** Spectral derivatives of the state for the nonlinearity: spectra, then their physical-space fields. */
+  private readonly derivatives?: {
     pipeline: GPUComputePipeline
     binds: GPUBindGroup[]
     uniform: GPUBuffer
-    xHat: GPUBuffer
-    yHat: GPUBuffer
-    xPhys: GPUBuffer
-    yPhys: GPUBuffer
+    hats: GPUBuffer[]
+    physical: GPUBuffer[]
   }
   private readonly adapt: {
     symbols: GPUBuffer
@@ -159,24 +158,21 @@ export class SpectralSolver {
 
     this.nonlinearPipeline = pipeline(nonlinearShader(model, this.cells, gridSpec.nx))
     const nonlinearBuffers = [this.paramBuffer, this.physBuffer, this.physN]
-    if (model.usesGradient) {
-      const gradientPipeline = pipeline(gradientWgsl)
+    if (model.usesGradient || model.usesHigherDerivatives) {
+      const count = derivativeCount(!!model.usesHigherDerivatives)
+      const derivativePipeline = pipeline(derivativeShader(!!model.usesHigherDerivatives))
       const uniform = buffer(32, UNIFORM)
-      const xHat = buffer(specBytes, STORAGE)
-      const yHat = buffer(specBytes, STORAGE)
-      const xPhys = buffer(physBytes, STORAGE)
-      const yPhys = buffer(physBytes, STORAGE)
-      this.gradient = {
-        pipeline: gradientPipeline,
+      const hats = Array.from({ length: count }, () => buffer(specBytes, STORAGE))
+      const physical = Array.from({ length: count }, () => buffer(physBytes, STORAGE))
+      this.derivatives = {
+        pipeline: derivativePipeline,
         uniform,
-        xHat,
-        yHat,
-        xPhys,
-        yPhys,
-        binds: [this.uHat, this.stageState].map((src) => bind(gradientPipeline, [uniform, src, xHat, yHat])),
+        hats,
+        physical,
+        binds: [this.uHat, this.stageState].map((src) => bind(derivativePipeline, [uniform, src, ...hats])),
       }
-      nonlinearBuffers.push(xPhys, yPhys)
-      this.writeGradientUniform()
+      nonlinearBuffers.push(...physical)
+      this.writeDerivativeUniform()
     }
     this.nonlinearBind = bind(this.nonlinearPipeline, nonlinearBuffers)
 
@@ -294,7 +290,7 @@ export class SpectralSolver {
     this.grid.dx = dx
     this.coefficientsDirty = true
     this.symbolsDirty = true
-    this.writeGradientUniform()
+    this.writeDerivativeUniform()
     this.writeParams()
   }
 
@@ -360,7 +356,7 @@ export class SpectralSolver {
     const adaptive = this.adaptive.enabled
     if (adaptive) this.refreshSymbols()
     else this.refreshCoefficients()
-    const g = this.gradient
+    const g = this.derivatives
     for (let n = 0; n < count; n++) {
       if (adaptive) {
         // recompute the coefficients if the controller changed h (indirect, zero workgroups otherwise)
@@ -374,8 +370,7 @@ export class SpectralSolver {
         this.fft.inverse(encoder, stage === 0 ? this.uHat : this.stageState, this.physBuffer)
         if (g) {
           this.dispatch(encoder, g.pipeline, g.binds[stage === 0 ? 0 : 1]!, this.spectralTotal)
-          this.fft.inverse(encoder, g.xHat, g.xPhys)
-          this.fft.inverse(encoder, g.yHat, g.yPhys)
+          g.hats.forEach((hat, i) => this.fft.inverse(encoder, hat, g.physical[i]!))
         }
         this.dispatch(encoder, this.nonlinearPipeline, this.nonlinearBind, this.cells)
         this.fft.forward(encoder, this.physN, this.nHat[stage]!)
@@ -483,15 +478,15 @@ export class SpectralSolver {
     this.device.queue.writeBuffer(this.paramBuffer, 0, values)
   }
 
-  private writeGradientUniform(): void {
-    if (!this.gradient) return
+  private writeDerivativeUniform(): void {
+    if (!this.derivatives) return
     const view = new DataView(new ArrayBuffer(32))
     view.setUint32(0, this.grid.nx, true)
     view.setUint32(4, this.grid.ny, true)
     view.setUint32(8, this.modes, true)
     view.setUint32(12, this.spectralTotal, true)
     view.setFloat32(16, this.grid.dx, true)
-    this.device.queue.writeBuffer(this.gradient.uniform, 0, view.buffer)
+    this.device.queue.writeBuffer(this.derivatives.uniform, 0, view.buffer)
   }
 
   /** Reset the GPU controller state (h, t, accepted, error, counters) and recompute the coefficients. */

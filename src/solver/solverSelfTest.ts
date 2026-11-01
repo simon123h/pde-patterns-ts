@@ -7,6 +7,7 @@ import { models } from '../models'
 import { kuramotoSivashinsky } from '../models/kuramotoSivashinsky'
 import { nikolaevskiy } from '../models/nikolaevskiy'
 import { swiftHohenberg } from '../models/swiftHohenberg'
+import { thinFilm } from '../models/thinFilm'
 import type { SpectralModel } from '../models/types'
 import { buildCoefficients } from './coefficients'
 import { SpectralSolver, type AdaptiveOptions, type StepStats } from './spectralSolver'
@@ -24,8 +25,9 @@ async function run(
   params: Record<string, number>,
   h: number,
   steps: number,
+  grid = GRID,
 ): Promise<{ data: Float32Array; time: number }> {
-  const solver = new SpectralSolver(device, model, GRID)
+  const solver = new SpectralSolver(device, model, grid)
   solver.setParams(params)
   solver.setDt(h)
   solver.reset(init)
@@ -158,8 +160,66 @@ export async function runSolverSelfTest(log: (line: string) => void): Promise<bo
       log(`${pass ? 'PASS' : 'FAIL'} GPU vs CPU coefficients (${model.name}): max relative difference ${worst.toExponential(2)} (plane ${worstPlane})`)
     }
   }
-  if (new URLSearchParams(location.search).get('only') === 'coef') {
+  const thinFilmTests = async () => {
+    // Thin film: dispersion relation λ = −h₀³k²(k² + f''(h₀)) about the flat film, f'' = −3h⁻⁴ + 6h⁻⁷;
+    // mode 1 of a domain of length 8π has k = 1/4 (unstable), mode 2 has k = 1/2 (stable)
+    {
+      const h0 = 2
+      const grid = { nx: N, ny: N, dx: (8 * Math.PI) / N }
+      const fpp = -3 / h0 ** 4 + 6 / h0 ** 7
+      const lambda = (k: number) => -(h0 ** 3) * k * k * (k * k + fpp)
+      const film = (mode: number, amplitude: number) => stripes(mode, amplitude).map((v) => v + h0)
+      const mode = (data: Float32Array, m: number, amplitude: number) => stripeAmplitude(data, m) / amplitude
+      const params = { h0, noise: 0 }
+      const growth = await run(device, thinFilm, film(1, 1e-4), params, 1, 60, grid)
+      check('thin film unstable mode growth e^{λt}', mode(growth.data, 1, 1e-4), Math.exp(lambda(0.25) * growth.time), 2e-3)
+      // a small step: the stabilizing part of N is large at k = 1/2, which limits ETDRK4's accuracy
+      const decay = await run(device, thinFilm, film(2, 1e-3), params, 0.2, 50, grid)
+      check('thin film stable mode decay e^{λt}', mode(decay.data, 2, 1e-3), Math.exp(lambda(0.5) * decay.time), 2e-3)
+      check('thin film mass conservation', mean(decay.data), h0, 1e-5)
+    }
+    // Thin film, finite amplitude: ∂t h = (h³ p_x)_x for h = 2 + 0.5 cos(kx), compared with the analytic
+    // right-hand side after one short step (checks the nonlinear terms, which linearization does not)
+    {
+      const grid = { nx: N, ny: N, dx: (8 * Math.PI) / N }
+      const k = 0.5
+      const a = 0.5
+      const dt = 5e-4 // short enough that (h₁ − h₀)/dt approximates ∂t h also for the stiffly damped harmonics
+      const fp2 = (h: number) => -3 / h ** 4 + 6 / h ** 7
+      const fp3 = (h: number) => 12 / h ** 5 - 42 / h ** 8
+      const init = new Float32Array(N * N)
+      const rhs = new Float32Array(N)
+      for (let x = 0; x < N; x++) {
+        const c = Math.cos(k * x * grid.dx)
+        const sn = Math.sin(k * x * grid.dx)
+        const h = 2 + a * c
+        const hx = -a * k * sn
+        const hxx = -a * k * k * c
+        const hxxx = a * k ** 3 * sn
+        const hxxxx = a * k ** 4 * c
+        rhs[x] = h ** 3 * (-hxxxx + fp2(h) * hxx + fp3(h) * hx * hx) + 3 * h * h * hx * (-hxxx + fp2(h) * hx)
+        for (let y = 0; y < N; y++) init[y * N + x] = h
+      }
+      const { data } = await run(device, thinFilm, init, { h0: 2, noise: 0 }, dt, 1, grid)
+      let err = 0
+      let norm = 0
+      for (let x = 0; x < N; x++) {
+        const rate = (data[2 * x]! - init[x]!) / dt
+        err += (rate - rhs[x]!) ** 2
+        norm += rhs[x]! ** 2
+      }
+      const rel = Math.sqrt(err / norm)
+      ok &&= rel < 0.02
+      log(`${rel < 0.02 ? 'PASS' : 'FAIL'} thin film nonlinear right-hand side: relative L2 error ${rel.toExponential(2)} (rms rhs ${Math.sqrt(norm / N).toExponential(2)})`)
+    }
+  }
+  const only = new URLSearchParams(location.search).get('only')
+  if (only === 'coef') {
     await coefficientTests()
+    return ok
+  }
+  if (only === 'thin') {
+    await thinFilmTests()
     return ok
   }
   // Brush: a stamp of amplitude 0.5 (SH paint amount) at a grid node must give a Gaussian of that peak
@@ -195,6 +255,7 @@ export async function runSolverSelfTest(log: (line: string) => void): Promise<bo
     const { data, time } = await run(device, swiftHohenberg, stripes(4, 1e-3), { r: 0.2, g: 0 }, 0.02, 5)
     check('SH damped mode decay e^{Lt}', stripeAmplitude(data, 4) / 1e-3, Math.exp((0.2 - 9) * time), 2e-4)
   }
+  await thinFilmTests()
   // Cahn–Hilliard: linearization L = k² − γk⁴ (checks the stabilizer split and the −k² multiplier)
   {
     const k = 0.5

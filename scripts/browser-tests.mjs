@@ -1,7 +1,7 @@
 // Runs the in-browser self-test pages in headless Chrome (software WebGPU through SwiftShader
 // unless a GPU is available) and exits non-zero if any of them fails.
 //
-// usage: node scripts/browser-tests.mjs [fft] [render] [solver]
+// usage: node scripts/browser-tests.mjs [fft] [render] [solver] [coef] [thin]
 // env:   CHROME=<path to chrome> (default google-chrome), TEST_TIMEOUT=<seconds per page> (default 900)
 import { spawn } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -9,9 +9,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer } from 'vite'
 
-const PAGES = { fft: 'fft-test.html', render: 'render-test.html', solver: 'solver-test.html' }
+// `coef` and `thin` run only the coefficient comparison or the thin-film checks of the solver page
+const PAGES = { fft: 'fft-test.html', render: 'render-test.html', solver: 'solver-test.html', coef: 'solver-test.html?only=coef', thin: 'solver-test.html?only=thin' }
 const selected = process.argv.slice(2)
-const names = selected.length ? selected : Object.keys(PAGES)
+const names = selected.length ? selected : ['fft', 'render', 'solver']
 for (const name of names) if (!PAGES[name]) throw new Error(`unknown test "${name}", expected one of ${Object.keys(PAGES).join(', ')}`)
 
 const timeoutMs = 1000 * Number(process.env.TEST_TIMEOUT ?? 900)
@@ -51,7 +52,7 @@ try {
   }
   for (const name of names) {
     const target = await devtools(`/json/new?${origin}/${PAGES[name]}`, { method: 'PUT' })
-    const prefix = name.toUpperCase() + '-'
+    const prefix = PAGES[name].startsWith('solver') ? 'SOLVER-' : name.toUpperCase() + '-'
     const started = Date.now()
     let title = ''
     while (Date.now() - started < timeoutMs) {
