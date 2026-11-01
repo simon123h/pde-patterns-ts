@@ -8,7 +8,8 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:browser": "node scripts/browser-tests.mjs"
   },
   "dependencies": {
     "vue": "^3.5.44"
