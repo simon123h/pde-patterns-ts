@@ -63,3 +63,34 @@ export function buildCoefficients(
   }
   return out
 }
+
+/**
+ * Step-size independent per-mode data for the GPU coefficient kernel: (Re L, Im L, M, 0) with the
+ * model's nonlinear multiplier M (zero for dealiased modes), in the same layout as
+ * `buildCoefficients` (one vec4 per mode, index = field·modes + kx·ny + ky).
+ */
+export function buildSymbols(model: SpectralModel, params: Record<string, number>, grid: GridSpec): Float32Array<ArrayBuffer> {
+  const { nx, ny, dx } = grid
+  const kxCount = model.complex ? nx : nx / 2 + 1
+  const M = kxCount * ny
+  const out = new Float32Array(4 * model.fields * M)
+  const kUnitX = (2 * Math.PI) / (nx * dx)
+  const kUnitY = (2 * Math.PI) / (ny * dx)
+  for (let field = 0; field < model.fields; field++) {
+    for (let kx = 0; kx < kxCount; kx++) {
+      const mx = signedIndex(kx, nx)
+      for (let ky = 0; ky < ny; ky++) {
+        const my = signedIndex(ky, ny)
+        const dealiased = Math.abs(mx) * 3 > nx || Math.abs(my) * 3 > ny
+        const kxv = mx * kUnitX
+        const kyv = my * kUnitY
+        const k2 = kxv * kxv + kyv * kyv
+        const o = 4 * (field * M + kx * ny + ky)
+        out[o] = model.linearSymbol(k2, field, params, kxv, kyv)
+        out[o + 1] = model.linearSymbolImag?.(k2, field, params, kxv, kyv) ?? 0
+        out[o + 2] = dealiased ? 0 : (model.nonlinearSymbol?.(k2, field, params, kxv, kyv) ?? 1)
+      }
+    }
+  }
+  return out
+}

@@ -2,10 +2,13 @@ import { Fft2D } from '../gpu/fft'
 import { RealFft2D } from '../gpu/realFft'
 import type { SpectralTransform } from '../gpu/transform'
 import type { SpectralModel } from '../models/types'
+import coefficientsWgsl from './shaders/coefficients.wgsl?raw'
 import combineWgsl from './shaders/combine.wgsl?raw'
+import commitWgsl from './shaders/commit.wgsl?raw'
+import controllerWgsl from './shaders/controller.wgsl?raw'
 import gradientWgsl from './shaders/gradient.wgsl?raw'
 import paintWgsl from './shaders/paint.wgsl?raw'
-import { buildCoefficients, COEFFICIENT_PLANES, spectralModes, type GridSpec } from './coefficients'
+import { buildCoefficients, buildSymbols, COEFFICIENT_PLANES, spectralModes, type GridSpec } from './coefficients'
 import { nonlinearShader } from './nonlinearShader'
 
 const WORKGROUP = 256
@@ -13,6 +16,24 @@ const STORAGE = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsag
 /** Most brush stamps applied in one frame. */
 export const MAX_STAMPS = 256
 const UNIFORM = GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+
+export interface AdaptiveOptions {
+  enabled: boolean
+  /** Relative error tolerance per step. */
+  tol: number
+  /** Largest allowed step size; the smallest is `hmin`. */
+  hmax: number
+  hmin: number
+}
+
+/** Controller state mirrored from the GPU (asynchronously, a frame or two behind). */
+export interface StepStats {
+  h: number
+  t: number
+  error: number
+  accepted: number
+  rejected: number
+}
 
 /**
  * Pseudospectral solver for ∂t û = L û + M·FFT[N(u)] on a periodic square nx × ny grid,
@@ -31,8 +52,12 @@ export class SpectralSolver {
   /** Spectral modes per field, and over all fields. */
   readonly modes: number
   readonly spectralTotal: number
-  /** Simulated time. */
-  time = 0
+  private cpuTime = 0
+  private adaptive: AdaptiveOptions = { enabled: false, tol: 1e-3, hmax: 1, hmin: 1e-4 }
+  private symbolsDirty = true
+  private latestStats: StepStats = { h: 0, t: 0, error: 0, accepted: 0, rejected: 0 }
+  private statsMapping = false
+  private statsPending = false
 
   private readonly grid: GridSpec
   private params: Record<string, number>
@@ -51,6 +76,7 @@ export class SpectralSolver {
   private readonly nonlinearBind: GPUBindGroup
   private readonly combinePipeline: GPUComputePipeline
   private readonly combineBinds: GPUBindGroup[]
+  private readonly combineAdaptiveBind: GPUBindGroup
   private readonly gradient?: {
     pipeline: GPUComputePipeline
     binds: GPUBindGroup[]
@@ -59,6 +85,20 @@ export class SpectralSolver {
     yHat: GPUBuffer
     xPhys: GPUBuffer
     yPhys: GPUBuffer
+  }
+  private readonly adapt: {
+    symbols: GPUBuffer
+    ctl: GPUBuffer
+    ctlParams: GPUBuffer
+    args: GPUBuffer
+    staging: GPUBuffer
+    partialCount: number
+    coefficients: GPUComputePipeline
+    coefficientBind: GPUBindGroup
+    controller: GPUComputePipeline
+    controllerBind: GPUBindGroup
+    commit: GPUComputePipeline
+    commitBind: GPUBindGroup
   }
   private readonly paintPipeline: GPUComputePipeline
   private readonly paintBind: GPUBindGroup
@@ -141,11 +181,44 @@ export class SpectralSolver {
     this.nonlinearBind = bind(this.nonlinearPipeline, nonlinearBuffers)
 
     this.combinePipeline = pipeline(combineWgsl)
-    this.combineBinds = [0, 1, 2, 3].map((stage) => {
-      const stageParams = buffer(16, UNIFORM)
-      device.queue.writeBuffer(stageParams, 0, new Uint32Array([stage, this.spectralTotal, 0, 0]))
-      return bind(this.combinePipeline, [stageParams, this.coef, this.uHat, ...this.nHat, this.stageState])
-    })
+    const partialCount = Math.ceil(this.spectralTotal / WORKGROUP)
+    const partials = buffer(partialCount * 8, STORAGE)
+    // two uniform sets for the final stage: without and with error estimation
+    const stageParams = (stage: number, adapt: number) => {
+      const b = buffer(16, UNIFORM)
+      device.queue.writeBuffer(b, 0, new Uint32Array([stage, this.spectralTotal, adapt, 0]))
+      return b
+    }
+    const combineBind = (params: GPUBuffer) =>
+      bind(this.combinePipeline, [params, this.coef, this.uHat, ...this.nHat, this.stageState, partials])
+    this.combineBinds = [0, 1, 2, 3].map((stage) => combineBind(stageParams(stage, 0)))
+    this.combineAdaptiveBind = combineBind(stageParams(3, 1))
+
+    const ctl = buffer(32, STORAGE)
+    const ctlParams = buffer(32, UNIFORM)
+    const args = buffer(16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST)
+    const symbols = buffer(this.spectralTotal * 16, STORAGE)
+    const coefficientUniform = buffer(16, UNIFORM)
+    device.queue.writeBuffer(coefficientUniform, 0, new Uint32Array([this.spectralTotal, 0, 0, 0]))
+    const commitUniform = buffer(16, UNIFORM)
+    device.queue.writeBuffer(commitUniform, 0, new Uint32Array([this.spectralTotal, 0, 0, 0]))
+    const coefficients = pipeline(coefficientsWgsl)
+    const controller = pipeline(controllerWgsl)
+    const commit = pipeline(commitWgsl)
+    this.adapt = {
+      symbols,
+      ctl,
+      ctlParams,
+      args,
+      staging: buffer(32, GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ),
+      partialCount,
+      coefficients,
+      coefficientBind: bind(coefficients, [coefficientUniform, symbols, ctl, this.coef]),
+      controller,
+      controllerBind: bind(controller, [ctlParams, partials, ctl, args]),
+      commit,
+      commitBind: bind(commit, [commitUniform, ctl, this.stageState, this.uHat]),
+    }
 
     this.paintPipeline = pipeline(paintWgsl)
     this.paintUniform = buffer(48, UNIFORM)
@@ -160,8 +233,18 @@ export class SpectralSolver {
     return this.physBuffer
   }
 
+  /** Simulated time (in adaptive mode mirrored from the GPU, a frame or two behind). */
+  get time(): number {
+    return this.adaptive.enabled ? this.latestStats.t : this.cpuTime
+  }
+
+  /** Current step size (in adaptive mode the controller's latest choice). */
   get dt(): number {
-    return this.h
+    return this.adaptive.enabled && this.latestStats.h > 0 ? this.latestStats.h : this.h
+  }
+
+  get stats(): StepStats {
+    return this.latestStats
   }
 
   /** Side length of the domain. */
@@ -170,9 +253,39 @@ export class SpectralSolver {
   }
 
   setDt(h: number): void {
+    if (this.adaptive.enabled) {
+      // the controller owns h; a manual change restarts it from the requested value
+      this.h = h
+      this.initController(h, this.latestStats.t)
+      return
+    }
     if (h === this.h) return
     this.h = h
     this.coefficientsDirty = true
+  }
+
+  /** Turn adaptive time stepping on or off and set its tolerance and step-size range. */
+  setAdaptive(options: AdaptiveOptions): void {
+    const was = this.adaptive.enabled
+    this.adaptive = { ...options }
+    const view = new DataView(new ArrayBuffer(32))
+    view.setUint32(0, this.adapt.partialCount, true)
+    view.setUint32(4, Math.ceil(this.spectralTotal / WORKGROUP), true)
+    view.setFloat32(8, options.tol, true)
+    view.setFloat32(12, options.hmin, true)
+    view.setFloat32(16, options.hmax, true)
+    view.setFloat32(20, 0.9, true)
+    this.device.queue.writeBuffer(this.adapt.ctlParams, 0, view.buffer)
+    if (options.enabled && !was) {
+      this.symbolsDirty = true
+      this.initController(this.h, this.cpuTime)
+    } else if (!options.enabled && was) {
+      if (this.latestStats.h > 0) this.h = this.latestStats.h
+      this.cpuTime = this.latestStats.t
+      this.coefficientsDirty = true
+    } else if (options.enabled) {
+      this.forceCoefficients()
+    }
   }
 
   setDomain(length: number): void {
@@ -180,6 +293,7 @@ export class SpectralSolver {
     if (dx === this.grid.dx) return
     this.grid.dx = dx
     this.coefficientsDirty = true
+    this.symbolsDirty = true
     this.writeGradientUniform()
     this.writeParams()
   }
@@ -187,6 +301,7 @@ export class SpectralSolver {
   setParams(params: Record<string, number>): void {
     this.params = { ...this.params, ...params }
     this.coefficientsDirty = true
+    this.symbolsDirty = true
     this.writeParams()
   }
 
@@ -218,7 +333,8 @@ export class SpectralSolver {
     const enc = this.device.createCommandEncoder()
     this.fft.forward(enc, this.physBuffer, this.uHat)
     this.device.queue.submit([enc.finish()])
-    this.time = 0
+    this.cpuTime = 0
+    if (this.adaptive.enabled) this.initController(Math.min(Math.max(this.h, this.adaptive.hmin), this.adaptive.hmax), 0)
   }
 
   /** Read the current physical-space fields back as interleaved (re, im), fields back to back. */
@@ -241,9 +357,19 @@ export class SpectralSolver {
 
   /** Encode `count` ETDRK4 steps. Must be submitted before the next call that changes dt or params. */
   step(encoder: GPUCommandEncoder, count = 1): void {
-    this.refreshCoefficients()
+    const adaptive = this.adaptive.enabled
+    if (adaptive) this.refreshSymbols()
+    else this.refreshCoefficients()
     const g = this.gradient
     for (let n = 0; n < count; n++) {
+      if (adaptive) {
+        // recompute the coefficients if the controller changed h (indirect, zero workgroups otherwise)
+        const pass = encoder.beginComputePass()
+        pass.setPipeline(this.adapt.coefficients)
+        pass.setBindGroup(0, this.adapt.coefficientBind)
+        pass.dispatchWorkgroupsIndirect(this.adapt.args, 0)
+        pass.end()
+      }
       for (let stage = 0; stage < 4; stage++) {
         this.fft.inverse(encoder, stage === 0 ? this.uHat : this.stageState, this.physBuffer)
         if (g) {
@@ -253,11 +379,59 @@ export class SpectralSolver {
         }
         this.dispatch(encoder, this.nonlinearPipeline, this.nonlinearBind, this.cells)
         this.fft.forward(encoder, this.physN, this.nHat[stage]!)
-        this.dispatch(encoder, this.combinePipeline, this.combineBinds[stage]!, this.spectralTotal)
+        const combine = adaptive && stage === 3 ? this.combineAdaptiveBind : this.combineBinds[stage]!
+        this.dispatch(encoder, this.combinePipeline, combine, this.spectralTotal)
       }
-      encoder.copyBufferToBuffer(this.stageState, 0, this.uHat, 0, this.spectralTotal * 8)
-      this.time += this.h
+      if (adaptive) {
+        const pass = encoder.beginComputePass()
+        pass.setPipeline(this.adapt.controller)
+        pass.setBindGroup(0, this.adapt.controllerBind)
+        pass.dispatchWorkgroups(1)
+        pass.end()
+        this.dispatch(encoder, this.adapt.commit, this.adapt.commitBind, this.spectralTotal)
+      } else {
+        encoder.copyBufferToBuffer(this.stageState, 0, this.uHat, 0, this.spectralTotal * 8)
+        this.cpuTime += this.h
+      }
     }
+  }
+
+  /** In adaptive mode: encode a copy of the controller state for `afterSubmit` to read back. */
+  encodeStatsCopy(encoder: GPUCommandEncoder): void {
+    if (!this.adaptive.enabled || this.statsMapping) return
+    encoder.copyBufferToBuffer(this.adapt.ctl, 0, this.adapt.staging, 0, 32)
+    this.statsPending = true
+  }
+
+  /** Call right after submitting the encoder passed to `encodeStatsCopy`. */
+  afterSubmit(): Promise<void> {
+    if (!this.statsPending) return Promise.resolve()
+    this.statsPending = false
+    this.statsMapping = true
+    const staging = this.adapt.staging
+    return staging
+      .mapAsync(GPUMapMode.READ)
+      .then(() => {
+        const f = new Float32Array(staging.getMappedRange().slice(0))
+        staging.unmap()
+        this.latestStats = { h: f[0]!, t: f[1]!, error: f[3]!, accepted: f[4]!, rejected: f[5]! }
+      })
+      .catch(() => {})
+      .finally(() => (this.statsMapping = false))
+  }
+
+  /** Read the ETDRK4 coefficient planes back (complex, interleaved); for tests. */
+  async readCoefficients(): Promise<Float32Array> {
+    const bytes = COEFFICIENT_PLANES * this.spectralTotal * 8
+    const staging = this.device.createBuffer({ size: bytes, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ })
+    const enc = this.device.createCommandEncoder()
+    enc.copyBufferToBuffer(this.coef, 0, staging, 0, bytes)
+    this.device.queue.submit([enc.finish()])
+    await staging.mapAsync(GPUMapMode.READ)
+    const out = new Float32Array(staging.getMappedRange().slice(0))
+    staging.unmap()
+    staging.destroy()
+    return out
   }
 
   /**
@@ -318,6 +492,25 @@ export class SpectralSolver {
     view.setUint32(12, this.spectralTotal, true)
     view.setFloat32(16, this.grid.dx, true)
     this.device.queue.writeBuffer(this.gradient.uniform, 0, view.buffer)
+  }
+
+  /** Reset the GPU controller state (h, t, accepted, error, counters) and recompute the coefficients. */
+  private initController(h: number, t: number): void {
+    this.device.queue.writeBuffer(this.adapt.ctl, 0, new Float32Array([h, t, 1, 0, 0, 0, 0, 0]))
+    this.latestStats = { h, t, error: 0, accepted: 0, rejected: 0 }
+    this.forceCoefficients()
+  }
+
+  private forceCoefficients(): void {
+    const workgroups = Math.ceil(this.spectralTotal / WORKGROUP)
+    this.device.queue.writeBuffer(this.adapt.args, 0, new Uint32Array([workgroups, 1, 1, 0]))
+  }
+
+  private refreshSymbols(): void {
+    if (!this.symbolsDirty) return
+    this.device.queue.writeBuffer(this.adapt.symbols, 0, buildSymbols(this.model, this.params, this.grid))
+    this.symbolsDirty = false
+    this.forceCoefficients()
   }
 
   private refreshCoefficients(): void {
