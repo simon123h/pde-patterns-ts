@@ -21,16 +21,22 @@ const dt = ref(model.value.dt.default)
 const domain = ref(model.value.domain.default)
 const stepsPerFrame = ref(model.value.stepsPerFrame)
 const viewIndex = ref(0)
+const adaptive = ref(false)
+const toleranceExp = ref(-3) // error tolerance = 10^toleranceExp
+const maxDt = ref(model.value.dt.max)
 const colormap = ref('viridis')
 const brushSize = ref(3) // percent of the domain length
 const brushStrength = ref(1)
 const running = ref(true)
 const params = reactive<Record<string, number>>({})
-const stats = reactive({ fps: 0, time: 0 })
+const stats = reactive({ fps: 0, time: 0, dt: 0, accepted: 0, rejected: 0 })
 // updated every frame, copied into `stats` a few times per second: re-rendering the whole panel
 // at 60 Hz made native controls (the equation dropdown in particular) flicker and close
 let liveFps = 0
 let liveTime = 0
+let liveDt = 0
+let liveAccepted = 0
+let liveRejected = 0
 let statsTimer = 0
 
 let device: GPUDevice | null = null
@@ -48,6 +54,7 @@ function loadModelDefaults() {
   for (const key of Object.keys(params)) delete params[key]
   for (const p of m.params) params[p.key] = p.default
   dt.value = m.dt.default
+  maxDt.value = m.dt.max
   domain.value = m.domain.default
   stepsPerFrame.value = m.stepsPerFrame
   viewIndex.value = 0
@@ -69,8 +76,18 @@ function build() {
   solver.setParams({ ...params })
   solver.setDt(dt.value)
   solver.setDomain(domain.value)
+  applyAdaptive()
   solver.reset()
   renderer = new FieldRenderer(device, canvas.value, solver.physical, grid.nx, grid.ny, solver.real)
+}
+
+function applyAdaptive() {
+  solver?.setAdaptive({
+    enabled: adaptive.value,
+    tol: 10 ** toleranceExp.value,
+    hmax: maxDt.value,
+    hmin: model.value.dt.min * 0.01,
+  })
 }
 
 function resetSimulation() {
@@ -140,13 +157,18 @@ function frame(now: number) {
   solver.encodeView(enc)
   const view = model.value.views[viewIndex.value] ?? model.value.views[0]!
   renderer.render(enc, view.field, view.kind, colormap.value)
+  solver.encodeStatsCopy(enc)
   device.queue.submit([enc.finish()])
+  void solver.afterSubmit()
   inFlight++
   void device.queue.onSubmittedWorkDone().then(() => inFlight--)
 
   if (lastFrame) liveFps = liveFps * 0.9 + (1000 / (now - lastFrame)) * 0.1
   lastFrame = now
   liveTime = solver.time
+  liveDt = solver.dt
+  liveAccepted = solver.stats.accepted
+  liveRejected = solver.stats.rejected
 }
 
 onMounted(async () => {
@@ -162,6 +184,9 @@ onMounted(async () => {
     statsTimer = window.setInterval(() => {
       stats.fps = liveFps
       stats.time = liveTime
+      stats.dt = liveDt
+      stats.accepted = liveAccepted
+      stats.rejected = liveRejected
     }, 250)
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
@@ -178,6 +203,7 @@ onBeforeUnmount(() => {
 watch(gridSize, build)
 watch(dt, (v) => solver?.setDt(v))
 watch(domain, (v) => solver?.setDomain(v))
+watch([adaptive, toleranceExp, maxDt], applyAdaptive)
 watch(params, () => solver?.setParams({ ...params }), { deep: true })
 // parameters that only shape the initial condition restart the run
 watch(
@@ -228,6 +254,23 @@ watch(
         <span>dt <output>{{ dt.toFixed(2) }}</output></span>
         <input v-model.number="dt" type="range" :min="model.dt.min" :max="model.dt.max" :step="model.dt.step" />
       </label>
+      <label class="check">
+        <input v-model="adaptive" type="checkbox" />
+        <span>adaptive dt (dt above is the starting value)</span>
+      </label>
+      <template v-if="adaptive">
+        <label>
+          <span>error tolerance <output>1e{{ toleranceExp.toFixed(1) }}</output></span>
+          <input v-model.number="toleranceExp" type="range" min="-6" max="-1" step="0.1" />
+        </label>
+        <label>
+          <span>max dt <output>{{ maxDt.toFixed(2) }}</output></span>
+          <input v-model.number="maxDt" type="range" :min="model.dt.min" :max="model.dt.max * 20" :step="model.dt.step" />
+        </label>
+        <p class="muted desc">
+          current dt = {{ stats.dt.toPrecision(3) }} · accepted {{ stats.accepted }} · rejected {{ stats.rejected }}
+        </p>
+      </template>
       <label>
         <span>steps / frame <output>{{ stepsPerFrame }}</output></span>
         <input v-model.number="stepsPerFrame" type="range" min="1" max="20" step="1" />
@@ -280,6 +323,7 @@ h1 { font-size: 18px; margin: 0; }
 h2 { font-size: 13px; margin: 12px 0 0; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
 label { display: flex; flex-direction: column; gap: 4px; }
 label span { display: flex; justify-content: space-between; }
+label.check { flex-direction: row; align-items: center; gap: 8px; }
 output { color: var(--muted); font-variant-numeric: tabular-nums; }
 select, button { background: #232734; color: var(--fg); border: 1px solid #333a4d; border-radius: 6px; padding: 6px 10px; }
 button { cursor: pointer; flex: 1; }
