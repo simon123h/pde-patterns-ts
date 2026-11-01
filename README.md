@@ -43,7 +43,14 @@ npm test           # CPU unit tests (Vitest)
 
 Pick an equation, adjust its parameters, the domain size `L`, the time step and the number of
 steps per frame, and the grid resolution (64²–1024²). **Reset** restarts from the model's initial
-condition. Complex fields offer several views (|A|, Re A, arg A); several ColorBrewer and
+condition. **Painting:** drag on the field with the left mouse button to add a Gaussian bump,
+with the right button to subtract one (brush size and strength are sliders; what is added to
+which field is defined per model, e.g. Gray–Scott adds `v` and removes `u`).
+
+**Adaptive dt:** tick *adaptive dt* to let the solver choose the step size from an error
+tolerance (10⁻⁶ … 10⁻¹) up to a maximum dt; the dt slider then sets the starting value, and the
+panel shows the current dt and the accepted/rejected step counts. This pays off for Cahn–Hilliard
+coarsening, where dt grows by orders of magnitude. Complex fields offer several views (|A|, Re A, arg A); several ColorBrewer and
 perceptual colormaps are available, and the diverging ones are centered on zero.
 
 ### In-browser self-tests
@@ -53,8 +60,8 @@ lines and ends with `ALL PASSED`:
 
 | Page | Checks |
 |---|---|
-| `/fft-test.html` | GPU FFT against the f64 CPU reference (incl. batching) plus timings |
-| `/solver-test.html` | linear growth/decay rates, conservation laws, saturation amplitude for the models |
+| `/fft-test.html` | complex and real-to-complex GPU FFTs against the f64 CPU reference (incl. batching) plus timings |
+| `/solver-test.html` | linear growth/decay rates, conservation laws, saturation amplitude, the brush, adaptive stepping and GPU-vs-CPU coefficients (`?only=coef` for just the last) |
 | `/render-test.html` | colormaps, diverging centering and phase view rendered offscreen |
 
 ## Numerics
@@ -71,10 +78,22 @@ lines and ends with `ALL PASSED`:
 - **Model hooks**: a model supplies the linear symbol `L(k)` (complex), an optional Fourier-space
   multiplier on the nonlinear term (e.g. `−k²` for Cahn–Hilliard's `∇²(u³−3u)` after
   stabilization) and a WGSL snippet for the pointwise nonlinearity.
-- **FFT**: custom WGSL implementation. A radix-2 FFT of a whole row lives in workgroup memory
-  (rows up to 2048), twiddles come from an f64 table, and 2D transforms are
-  row-FFT → tiled transpose → row-FFT. The spectrum is kept **transposed**
-  (`index = kx·ny + ky`), which saves two transposes per step.
+- **FFT**: custom WGSL implementation. A radix-2 FFT of a whole row lives in workgroup memory,
+  twiddles come from an f64 table, and 2D transforms are row-FFT → tiled transpose → row-FFT. The
+  spectrum is kept **transposed** (`index = kx·ny + ky`), which saves two transposes per step.
+  Real fields (all models except the CGLE) use **real-to-complex** transforms: a real row of n
+  samples is transformed as a complex row of n/2 samples and unpacked, so only the half spectrum
+  `kx ≤ nx/2` is stored and transformed — about half the memory and work, and the physical
+  fields are plain `f32` buffers. Complex fields use full complex transforms.
+- **Adaptive time stepping**: the 4th-order ETDRK4 result is compared with the (2nd-order) third
+  stage; their difference estimates the local error (∝ h³). A one-workgroup GPU kernel reduces the
+  per-workgroup error sums, accepts or rejects the step, picks the next h (safety factor 0.9, growth
+  limited to 2×) and a commit kernel applies the new state only if accepted. The ETD coefficients
+  for the new h are then recomputed on the GPU (f32, own `sincos` for accurate phases) through an
+  indirect dispatch that is skipped while h is unchanged. No CPU round trip is involved in the
+  loop; only the statistics are read back asynchronously for display.
+- **Mouse brush**: stamps are added directly in Fourier space (the transform of a Gaussian is a
+  Gaussian times a phase), so painting costs a single kernel and no extra FFT.
 - **Rendering**: fields are drawn straight from the GPU buffer with bilinear periodic sampling;
   the colour range is found by a small compute kernel — nothing is read back to the CPU.
 
@@ -82,10 +101,11 @@ lines and ends with `ALL PASSED`:
 
 ```
 src/
-  gpu/          device setup, 2D FFT (WGSL) and its self-test
+  gpu/          device setup, complex and real-to-complex 2D FFTs (WGSL) and their self-test
   math/         CPU reference FFT, φ-functions and ETDRK4 coefficients (f64)
   models/       one file per PDE + the model interface (types.ts)
-  solver/       SpectralSolver, coefficient builder, WGSL kernels (combine, gradient, nonlinearity)
+  solver/       SpectralSolver, coefficient builder, WGSL kernels (combine, gradient, brush,
+                nonlinearity, GPU coefficients, step-size controller)
   render/       FieldRenderer, colormaps and shaders
   components/   Vue UI
 tests/          CPU unit tests
@@ -99,8 +119,8 @@ documented fields) and add it to `src/models/index.ts`. A model with a real fiel
 minimum: the parameters, a linear symbol, a WGSL nonlinearity returning a `vec2<f32>` (re, im),
 a view list and an initial condition. Everything else — UI, stepping, rendering — is generic.
 
-## Roadmap
+## Ideas for later
 
-- mouse painting (perturb the field interactively)
-- real-to-complex FFTs (half the memory and transform work for real fields)
-- adaptive time stepping
+- Non-periodic boundaries through a finite-difference backend
+- Better error estimators (embedded ETD pairs) and a PI step-size controller
+- Packing two real fields into one complex transform, GPU-resident analysis (spectra, defect counts)
