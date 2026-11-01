@@ -61,6 +61,15 @@ function loadModelDefaults() {
   brushSize.value = (m.paint?.sigma ?? 0.03) * 100
 }
 
+/** Applies a preset of the current model; settings it leaves out keep their value. */
+function applyPreset(index: number) {
+  const preset = model.value.presets?.[index]
+  if (!preset) return
+  Object.assign(params, preset.params)
+  if (preset.dt !== undefined) dt.value = preset.dt
+  if (preset.domain !== undefined) domain.value = preset.domain
+}
+
 function selectModel(id: string) {
   model.value = models.find((m) => m.id === id)!
   loadModelDefaults()
@@ -238,6 +247,16 @@ watch(
         </select>
       </label>
       <p class="muted desc">{{ model.description }}</p>
+      <label v-if="model.presets?.length">
+        <span>preset</span>
+        <select
+          :key="model.id"
+          @change="(e) => { const t = e.target as HTMLSelectElement; applyPreset(t.selectedIndex - 1); t.selectedIndex = 0; t.blur() }"
+        >
+          <option disabled selected>choose…</option>
+          <option v-for="(preset, i) in model.presets" :key="i" :title="preset.description">{{ preset.name }}</option>
+        </select>
+      </label>
 
       <h2>Parameters</h2>
       <label v-for="p in model.params" :key="p.key">

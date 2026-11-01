@@ -17,6 +17,10 @@ export const swiftHohenberg = defineModel(
     stepsPerFrame: 2,
     paint: { amounts: [0.5], sigma: 0.03 },
     views: [{ label: 'u', field: 0, kind: 're' }],
+    presets: [
+      { name: 'Stripes', description: 'Symmetric nonlinearity: rolls with wavelength 2π.', params: { r: 0.2, g: 0 } },
+      { name: 'Hexagons', description: 'The quadratic term favours hexagonal spots.', params: { r: 0.2, g: 1 } },
+    ],
   },
   {
     // In Fourier space ∇² → −k², so L = r − (1 − k²)²

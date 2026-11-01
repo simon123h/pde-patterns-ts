@@ -17,6 +17,10 @@ export const ginzburgLandau = defineModel(
     dt: { default: 0.1, min: 0.01, max: 1, step: 0.01 },
     stepsPerFrame: 2,
     paint: { amounts: [0.5], sigma: 0.03 },
+    presets: [
+      { name: 'Defect turbulence', description: 'Benjamin–Feir unstable (1+αβ < 0): spirals break up.', params: { alpha: 1.5, beta: -1.5 } },
+      { name: 'Benjamin–Feir stable', description: '1+αβ > 0: plane waves are stable and defects are ordered.', params: { alpha: 0.5, beta: 0.5 } },
+    ],
     views: [
       { label: '|A|', field: 0, kind: 'abs' },
       { label: 'Re A', field: 0, kind: 're' },
