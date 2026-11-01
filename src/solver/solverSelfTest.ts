@@ -379,6 +379,29 @@ export async function runSolverSelfTest(log: (line: string) => void): Promise<bo
       const { data } = await run(device, swiftHohenberg, stripes(2, 0.05), { r, g: 0 }, 2, 150)
       check('SH stripe saturation amplitude sqrt(4r/3)', stripeAmplitude(data, 2), Math.sqrt((4 * r) / 3), 0.03)
   })
+  // Blow-up recovery: a step size far too large for Swift–Hohenberg diverges; the guard must roll back and
+  // halve dt until the run is stable again
+  await section(['recovery', 'swift-hohenberg'], 'blow-up recovery', async () => {
+    const solver = solverFor(device, swiftHohenberg, LENGTH)
+    const before = solver.recoveries
+    solver.setParams({ r: 0.2, g: 0 })
+    solver.setDt(60)
+    solver.reset(stripes(2, 0.1))
+    for (let i = 0; i < 40; i++) {
+      const enc = device.createCommandEncoder()
+      solver.step(enc, 4)
+      solver.encodeHealthCheck(enc)
+      device.queue.submit([enc.finish()])
+      await solver.afterSubmit()
+      await device.queue.onSubmittedWorkDone()
+    }
+    const data = await solver.readPhysical()
+    const peak = data.reduce((m, v) => Math.max(m, Math.abs(v)), 0)
+    const recoveries = solver.recoveries - before
+    const pass = recoveries >= 1 && !solver.unstable && Number.isFinite(peak) && peak < 5 && solver.dt < 60
+    ok &&= pass
+    log(`${pass ? 'PASS' : 'FAIL'} blow-up recovery: ${recoveries} rollback(s), dt 60 → ${solver.dt.toPrecision(3)}, max |u| = ${peak.toPrecision(3)}${solver.unstable ? ' (gave up)' : ''}`)
+  })
   // Every registered model runs from its own initial state with its defaults and presets
   for (const model of models) {
     await section([model.id, 'models'], `${model.name} smoke test`, async () => {
