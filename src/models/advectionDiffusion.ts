@@ -32,6 +32,7 @@ export const advectionDiffusion: SpectralModel = {
     let vy = -params.A * cos(kappa * xy.x) * sin(kappa * xy.y);
     return vec2<f32>(-(vx * ux[0].x + vy * uy[0].x), 0.0);
   `,
+  paint: { amounts: [1], sigma: 0.03 },
   views: [{ label: 'u', field: 0, kind: 're' }],
   // smooth periodic square wave of stripes along x, so the vortex flow has something to stretch
   initial: ({ nx, ny }) => {

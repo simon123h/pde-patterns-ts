@@ -23,6 +23,7 @@ export const ginzburgLandau: SpectralModel = {
     // −(1 + iβ) m A
     return -m * vec2<f32>(a.x - params.beta * a.y, a.y + params.beta * a.x);
   `,
+  paint: { amounts: [0.5], sigma: 0.03 },
   views: [
     { label: '|A|', field: 0, kind: 'abs' },
     { label: 'Re A', field: 0, kind: 're' },

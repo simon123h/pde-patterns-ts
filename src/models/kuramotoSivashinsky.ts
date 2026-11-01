@@ -15,6 +15,7 @@ export const kuramotoSivashinsky: SpectralModel = {
   linearSymbol: (k2, _f, p) => k2 - p.nu! * k2 * k2,
   usesGradient: true,
   nonlinearWgsl: 'return vec2<f32>(-0.5 * (ux[0].x * ux[0].x + uy[0].x * uy[0].x), 0.0);',
+  paint: { amounts: [1], sigma: 0.03 },
   views: [{ label: 'u', field: 0, kind: 're' }],
   initial: (ctx) => noisyState(ctx, [0], 0.1),
 }

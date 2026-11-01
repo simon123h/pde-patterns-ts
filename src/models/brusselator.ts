@@ -28,6 +28,7 @@ export const brusselator: SpectralModel = {
     }
     return vec2<f32>(params.B * uu - r, 0.0);
   `,
+  paint: { amounts: [1, 0], sigma: 0.03 },
   views: [
     { label: 'u', field: 0, kind: 're' },
     { label: 'v', field: 1, kind: 're' },

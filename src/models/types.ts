@@ -25,6 +25,14 @@ export interface ViewSpec {
   kind: ViewKind
 }
 
+/** Mouse brush: a Gaussian bump added to the fields (left button adds, right button subtracts). */
+export interface PaintSpec {
+  /** Amplitude added to each field at the brush center. */
+  amounts: number[]
+  /** Default brush radius as a fraction of the domain length. */
+  sigma: number
+}
+
 export interface InitContext {
   nx: number
   ny: number
@@ -65,6 +73,8 @@ export interface SpectralModel {
    * Parameters are available as `params.<key>` (f32); `params.dx` is the grid spacing.
    */
   nonlinearWgsl: string
+  /** Brush settings; by default amplitude 1 on the first field. */
+  paint?: PaintSpec
   views: ViewSpec[]
   /** Initial state: interleaved (re, im) per cell, fields back to back (length 2·fields·nx·ny). */
   initial(ctx: InitContext): Float32Array

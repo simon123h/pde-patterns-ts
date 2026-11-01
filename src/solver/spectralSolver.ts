@@ -2,11 +2,14 @@ import { Fft2D } from '../gpu/fft'
 import type { SpectralModel } from '../models/types'
 import combineWgsl from './shaders/combine.wgsl?raw'
 import gradientWgsl from './shaders/gradient.wgsl?raw'
+import paintWgsl from './shaders/paint.wgsl?raw'
 import { buildCoefficients, COEFFICIENT_PLANES, type GridSpec } from './coefficients'
 import { nonlinearShader } from './nonlinearShader'
 
 const WORKGROUP = 256
 const STORAGE = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
+/** Most brush stamps applied in one frame. */
+export const MAX_STAMPS = 256
 const UNIFORM = GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
 
 /**
@@ -47,6 +50,10 @@ export class SpectralSolver {
     xPhys: GPUBuffer
     yPhys: GPUBuffer
   }
+  private readonly paintPipeline: GPUComputePipeline
+  private readonly paintBind: GPUBindGroup
+  private readonly paintUniform: GPUBuffer
+  private readonly stampBuffer: GPUBuffer
   private readonly owned: GPUBuffer[] = []
 
   constructor(
@@ -123,6 +130,11 @@ export class SpectralSolver {
       device.queue.writeBuffer(stageParams, 0, new Uint32Array([stage, this.total, 0, 0]))
       return bind(this.combinePipeline, [stageParams, this.coef, this.uHat, ...this.nHat, this.stageState])
     })
+
+    this.paintPipeline = pipeline(paintWgsl)
+    this.paintUniform = buffer(48, UNIFORM)
+    this.stampBuffer = buffer(MAX_STAMPS * 16, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST)
+    this.paintBind = bind(this.paintPipeline, [this.paintUniform, this.stampBuffer, this.uHat])
 
     this.writeParams()
   }
@@ -203,6 +215,29 @@ export class SpectralSolver {
       encoder.copyBufferToBuffer(this.stageState, 0, this.uHat, 0, this.total * 8)
       this.time += this.h
     }
+  }
+
+  /**
+   * Encode a brush: Gaussian bumps of radius `sigma` (domain units) at the given stamps
+   * (x, y in domain units, signed `scale` per stamp), scaled per field by the model's paint amounts.
+   * At most MAX_STAMPS stamps; call at most once per submission.
+   */
+  paint(encoder: GPUCommandEncoder, stamps: Float32Array<ArrayBuffer>, sigma: number): void {
+    const count = Math.min(MAX_STAMPS, stamps.length / 4)
+    if (count === 0) return
+    const amounts = this.model.paint?.amounts ?? [1]
+    const view = new DataView(new ArrayBuffer(48))
+    view.setUint32(0, count, true)
+    view.setUint32(4, this.grid.nx, true)
+    view.setUint32(8, this.grid.ny, true)
+    view.setUint32(12, this.cells, true)
+    view.setUint32(16, this.total, true)
+    view.setFloat32(20, sigma, true)
+    view.setFloat32(24, this.grid.dx, true)
+    for (let f = 0; f < 4; f++) view.setFloat32(32 + 4 * f, amounts[f] ?? 0, true)
+    this.device.queue.writeBuffer(this.paintUniform, 0, view.buffer)
+    this.device.queue.writeBuffer(this.stampBuffer, 0, stamps, 0, count * 4)
+    this.dispatch(encoder, this.paintPipeline, this.paintBind)
   }
 
   /** Transform the current state to physical space into `physical`. */

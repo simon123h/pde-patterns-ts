@@ -28,6 +28,7 @@ export const grayScott: SpectralModel = {
     }
     return vec2<f32>(r, 0.0);
   `,
+  paint: { amounts: [-0.5, 0.25], sigma: 0.03 },
   views: [
     { label: 'v', field: 1, kind: 're' },
     { label: 'u', field: 0, kind: 're' },

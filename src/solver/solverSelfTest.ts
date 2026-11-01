@@ -14,6 +14,20 @@ const N = 32
 const LENGTH = 4 * Math.PI
 const GRID = { nx: N, ny: N, dx: LENGTH / N }
 
+async function readPhysicalOf(device: GPUDevice, solver: SpectralSolver): Promise<Float32Array> {
+  const bytes = solver.total * 8
+  const staging = device.createBuffer({ size: bytes, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ })
+  const enc = device.createCommandEncoder()
+  solver.encodeView(enc)
+  enc.copyBufferToBuffer(solver.physical, 0, staging, 0, bytes)
+  device.queue.submit([enc.finish()])
+  await staging.mapAsync(GPUMapMode.READ)
+  const data = new Float32Array(staging.getMappedRange().slice(0))
+  staging.unmap()
+  staging.destroy()
+  return data
+}
+
 /** Interleaved (re, im) of all fields in physical space after running `steps` steps of size h. */
 async function run(
   device: GPUDevice,
@@ -91,6 +105,29 @@ export async function runSolverSelfTest(log: (line: string) => void): Promise<bo
     log(`${pass ? 'PASS' : 'FAIL'} ${name}: got ${got.toPrecision(6)}, want ${want.toPrecision(6)} (rel.err ${rel.toExponential(2)})`)
   }
 
+  // Brush: a stamp of amplitude 0.5 (SH paint amount) at a grid node must give a Gaussian of that peak
+  {
+    const solver = new SpectralSolver(device, swiftHohenberg, GRID)
+    solver.reset(new Float32Array(N * N))
+    const sigma = 0.06 * LENGTH
+    const enc = device.createCommandEncoder()
+    solver.paint(enc, new Float32Array([LENGTH / 2, LENGTH / 2, 2, 0]), sigma) // scale 2 × amount 0.5
+    device.queue.submit([enc.finish()])
+    const data = await readPhysicalOf(device, solver)
+    solver.destroy()
+    let peak = -Infinity
+    let at = 0
+    let sum = 0
+    for (let i = 0; i < N * N; i++) {
+      sum += data[2 * i]!
+      if (data[2 * i]! > peak) [peak, at] = [data[2 * i]!, i]
+    }
+    check('brush peak amplitude', peak, 1, 2e-3)
+    ok &&= at === (N / 2) * N + N / 2
+    log(`${at === (N / 2) * N + N / 2 ? 'PASS' : 'FAIL'} brush peak located at the stamp position (index ${at})`)
+    const dx = LENGTH / N
+    check('brush integral 2πσ²/dx²', sum, (2 * Math.PI * sigma * sigma) / (dx * dx), 2e-3)
+  }
   // Swift–Hohenberg: linear growth of the critical mode (k = 1): u ∝ e^{r t}
   {
     const { data, time } = await run(device, swiftHohenberg, stripes(2, 1e-4), { r: 0.2, g: 0 }, 0.5, 40)

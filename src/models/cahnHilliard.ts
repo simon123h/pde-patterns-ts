@@ -22,6 +22,7 @@ export const cahnHilliard: SpectralModel = {
   linearSymbol: (k2, _f, p) => -2 * k2 - p.gamma! * k2 * k2,
   nonlinearSymbol: (k2) => -k2,
   nonlinearWgsl: 'let v = u[0].x; return vec2<f32>(v * v * v - 3.0 * v, 0.0);',
+  paint: { amounts: [0.5], sigma: 0.03 },
   views: [{ label: 'u', field: 0, kind: 're' }],
   initial: (ctx) => noisyState(ctx, [ctx.params.mean ?? 0], 0.1),
 }
