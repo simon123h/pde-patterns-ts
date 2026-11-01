@@ -41,12 +41,20 @@ export interface InitContext {
   params: Record<string, number>
 }
 
+/** A named set of settings; anything left out keeps its current value. */
+export interface PresetSpec {
+  name: string
+  description?: string
+  params?: Record<string, number>
+  domain?: number
+  dt?: number
+}
+
 /**
- * A pseudospectral PDE  ∂t û_f = L_f(k) û_f + M_f(k) · FFT[ N_f(u, ∇u) ]  for `fields`
- * fields on a periodic square domain. Each field is complex-valued in general (real models
- * simply keep the imaginary part at zero); all fields are advanced by ETDRK4.
+ * The declarative half of a model: everything the UI and the tests need to know, as plain data.
+ * Nothing here depends on the discretization.
  */
-export interface SpectralModel {
+export interface ModelSpec {
   id: string
   name: string
   /** One-line description shown in the UI. */
@@ -59,6 +67,19 @@ export interface SpectralModel {
   dt: RangeSpec
   /** Sensible number of solver steps per animation frame. */
   stepsPerFrame: number
+  /** Brush settings; by default amplitude 1 on the first field. */
+  paint?: PaintSpec
+  views: ViewSpec[]
+  /** Interesting parameter sets, selectable in the UI. */
+  presets?: PresetSpec[]
+}
+
+/**
+ * The pseudospectral half of a model: a PDE  ∂t û_f = L_f(k) û_f + M_f(k) · FFT[ N_f(u, ∇u) ]  for
+ * `fields` fields on a periodic square domain. Each field is complex-valued in general (real models
+ * simply keep the imaginary part at zero); all fields are advanced by ETDRK4.
+ */
+export interface ModelImpl {
   /** Real part of the linear symbol L of one field, with k² = kx² + ky² (kx, ky are the signed wavenumbers). */
   linearSymbol(k2: number, field: number, params: Record<string, number>, kx: number, ky: number): number
   /** Imaginary part of the linear symbol (complex fields, or odd-in-k terms such as drift). */
@@ -75,9 +96,9 @@ export interface SpectralModel {
    * Parameters are available as `params.<key>` (f32); `params.dx` is the grid spacing.
    */
   nonlinearWgsl: string
-  /** Brush settings; by default amplitude 1 on the first field. */
-  paint?: PaintSpec
-  views: ViewSpec[]
   /** Initial state: interleaved (re, im) per cell, fields back to back (length 2·fields·nx·ny). */
   initial(ctx: InitContext): Float32Array
 }
+
+/** A complete model as the solver and the UI consume it. */
+export type SpectralModel = ModelSpec & ModelImpl
