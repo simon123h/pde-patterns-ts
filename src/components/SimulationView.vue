@@ -3,22 +3,25 @@ import { onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vu
 import { requestGpu } from '../gpu/device'
 import { models } from '../models'
 import type { SpectralModel } from '../models/types'
-import { FieldRenderer, type Colormap } from '../render/fieldRenderer'
+import { COLORMAPS } from '../render/colormaps'
+import { FieldRenderer } from '../render/fieldRenderer'
 import { SpectralSolver } from '../solver/spectralSolver'
 
-const GRID_SIZES = [128, 256, 512, 1024]
+const GRID_SIZES = [64, 128, 256, 512, 1024]
 
 const canvas = ref<HTMLCanvasElement | null>(null)
 const error = ref<string | null>(null)
 const adapterLabel = ref('')
 
 const model = shallowRef<SpectralModel>(models[0]!)
-const gridSize = ref(256)
+// `?grid=64` selects the initial grid size (handy on slow software adapters)
+const requestedGrid = Number(new URLSearchParams(location.search).get('grid'))
+const gridSize = ref(GRID_SIZES.includes(requestedGrid) || requestedGrid === 64 ? requestedGrid : 256)
 const dt = ref(model.value.dt.default)
 const domain = ref(model.value.domain.default)
 const stepsPerFrame = ref(model.value.stepsPerFrame)
 const viewIndex = ref(0)
-const colormap = ref<Colormap>('viridis')
+const colormap = ref('viridis')
 const running = ref(true)
 const params = reactive<Record<string, number>>({})
 const stats = reactive({ fps: 0, time: 0 })
@@ -28,6 +31,7 @@ let solver: SpectralSolver | null = null
 let renderer: FieldRenderer | null = null
 let raf = 0
 let lastFrame = 0
+let inFlight = 0 // submitted frames the GPU hasn't finished; limits queue build-up on slow adapters
 
 function loadModelDefaults() {
   const m = model.value
@@ -76,7 +80,7 @@ function resizeCanvas() {
 
 function frame(now: number) {
   raf = requestAnimationFrame(frame)
-  if (!device || !solver || !renderer) return
+  if (!device || !solver || !renderer || inFlight >= 2) return
   resizeCanvas()
   const enc = device.createCommandEncoder()
   if (running.value) solver.step(enc, stepsPerFrame.value)
@@ -84,6 +88,8 @@ function frame(now: number) {
   const view = model.value.views[viewIndex.value] ?? model.value.views[0]!
   renderer.render(enc, view.field, view.kind, colormap.value)
   device.queue.submit([enc.finish()])
+  inFlight++
+  void device.queue.onSubmittedWorkDone().then(() => inFlight--)
 
   if (lastFrame) stats.fps = stats.fps * 0.9 + (1000 / (now - lastFrame)) * 0.1
   lastFrame = now
@@ -124,7 +130,7 @@ watch(
 
 <template>
   <div class="layout">
-    <canvas ref="canvas" class="view" />
+    <div class="stage"><canvas ref="canvas" class="view" /></div>
     <aside class="panel">
       <h1>PDE Patterns</h1>
       <p v-if="error" class="error">{{ error }}</p>
@@ -173,8 +179,7 @@ watch(
       <label>
         <span>colormap</span>
         <select v-model="colormap">
-          <option value="viridis">viridis</option>
-          <option value="gray">gray</option>
+          <option v-for="c in COLORMAPS" :key="c.id" :value="c.id">{{ c.label }}</option>
         </select>
       </label>
 
@@ -188,7 +193,8 @@ watch(
 
 <style scoped>
 .layout { display: flex; height: 100vh; }
-.view { flex: 1; min-width: 0; height: 100%; object-fit: contain; background: #000; aspect-ratio: 1; max-width: 100vh; }
+.stage { flex: 1; min-width: 0; display: grid; place-items: center; background: #000; }
+.view { width: min(100%, 100vh); aspect-ratio: 1; }
 .panel { width: 280px; padding: 16px; background: var(--panel); overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
 h1 { font-size: 18px; margin: 0; }
 h2 { font-size: 13px; margin: 12px 0 0; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
