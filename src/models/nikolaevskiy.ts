@@ -19,6 +19,9 @@ export const nikolaevskiy = defineModel(
     stepsPerFrame: 2,
     paint: { amounts: [1], sigma: 0.03 },
     views: [{ label: 'u', field: 0, kind: 're' }],
+    // the field grows to large amplitudes (rms of tens) and the 2D scalar form can blow up independently of dt,
+    // so rolling back and halving dt does not help; the blow-up check is off for this equation
+    blowupRecovery: false,
   },
   {
     // ∇² → −k², so L = k² [ε − (1 − k²)²]

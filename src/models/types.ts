@@ -72,6 +72,11 @@ export interface ModelSpec {
   views: ViewSpec[]
   /** Interesting parameter sets, selectable in the UI. */
   presets?: PresetSpec[]
+  /**
+   * Roll back and halve dt when the state blows up (default true). Models whose solutions legitimately grow
+   * large or may blow up independently of dt can switch it off.
+   */
+  blowupRecovery?: boolean
 }
 
 /**
