@@ -44,9 +44,8 @@ describe.each(['kuramoto-sivashinsky', 'nikolaevskiy'])('%s mean', (id) => {
   })
 })
 
-describe('blow-up recovery opt-out', () => {
-  it('is off for the equations that blow up independently of dt, on for the rest', () => {
-    const off = models.filter((m) => m.blowupRecovery === false).map((m) => m.id).sort()
-    expect(off).toEqual(['kuramoto-sivashinsky', 'nikolaevskiy'])
+describe('blow-up protection', () => {
+  it('is off by default for every equation (it gave false alarms, see #45)', () => {
+    expect(models.filter((m) => m.blowupRecovery === true)).toEqual([])
   })
 })

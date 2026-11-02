@@ -54,7 +54,7 @@ export function defaultModelSettings(model: SpectralModel): ModelSettings {
     rangeMode: 'auto',
     rangeLo: 0,
     rangeHi: 1,
-    blowupProtection: model.blowupRecovery !== false,
+    blowupProtection: model.blowupRecovery === true,
   }
 }
 

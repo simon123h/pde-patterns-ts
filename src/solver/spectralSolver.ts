@@ -226,7 +226,7 @@ export class SpectralSolver {
     }
 
     this.guard = new StateGuard(device, this.uHat, ctl, this.spectralTotal)
-    this.protect = model.blowupRecovery !== false
+    this.protect = model.blowupRecovery === true
 
     this.paintPipeline = pipeline(paintWgsl)
     this.paintUniform = buffer(48, UNIFORM)
@@ -417,7 +417,7 @@ export class SpectralSolver {
     if (this.protect) this.guard.encodeCheck(encoder)
   }
 
-  /** Whether a blow-up is detected and rolled back (default: on, unless the model's `blowupRecovery` is false). */
+  /** Whether a blow-up is detected and rolled back (default: off, unless the model's `blowupRecovery` is true). */
   get blowupProtection(): boolean {
     return this.protect
   }

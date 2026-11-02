@@ -73,8 +73,8 @@ export interface ModelSpec {
   /** Interesting parameter sets, selectable in the UI. */
   presets?: PresetSpec[]
   /**
-   * Whether the blow-up protection (roll back and halve dt) starts switched on (default true). It can be
-   * toggled in the UI; models for which it gave false alarms start with it off.
+   * Whether the blow-up protection (roll back and halve dt) starts switched on (default false: it gave false
+   * alarms on legitimate runs, see #45). It can be toggled in the UI.
    */
   blowupRecovery?: boolean
 }
