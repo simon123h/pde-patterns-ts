@@ -14,8 +14,7 @@ export const kuramotoSivashinsky = defineModel(
     stepsPerFrame: 3,
     paint: { amounts: [1], sigma: 0.03 },
     views: [{ label: 'u', field: 0, kind: 're' }],
-    // the field grows to large amplitudes (rms of tens) and the 2D scalar form can blow up independently of dt,
-    // so rolling back and halving dt does not help; the blow-up check is off for this equation
+    // the protection fired on this equation without a visible blow-up (see #45), so it starts switched off
     blowupRecovery: false,
   },
   {

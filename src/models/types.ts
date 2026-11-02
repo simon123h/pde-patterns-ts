@@ -73,8 +73,8 @@ export interface ModelSpec {
   /** Interesting parameter sets, selectable in the UI. */
   presets?: PresetSpec[]
   /**
-   * Roll back and halve dt when the state blows up (default true). Models whose solutions legitimately grow
-   * large or may blow up independently of dt can switch it off.
+   * Whether the blow-up protection (roll back and halve dt) starts switched on (default true). It can be
+   * toggled in the UI; models for which it gave false alarms start with it off.
    */
   blowupRecovery?: boolean
 }
