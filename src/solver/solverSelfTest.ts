@@ -390,6 +390,7 @@ export async function runSolverSelfTest(log: (line: string) => void): Promise<bo
   await section(['recovery', 'swift-hohenberg'], 'blow-up recovery', async () => {
     const solver = solverFor(device, swiftHohenberg, LENGTH)
     const before = solver.recoveries
+    solver.setBlowupProtection(true) // off by default
     solver.setParams({ r: 0.2, g: 0 })
     solver.setDt(60)
     solver.reset(stripes(2, 0.1))
@@ -404,9 +405,32 @@ export async function runSolverSelfTest(log: (line: string) => void): Promise<bo
     const data = await solver.readPhysical()
     const peak = data.reduce((m, v) => Math.max(m, Math.abs(v)), 0)
     const recoveries = solver.recoveries - before
+    solver.setBlowupProtection(false)
     const pass = recoveries >= 1 && !solver.unstable && Number.isFinite(peak) && peak < 5 && solver.dt < 60
     ok &&= pass
     log(`${pass ? 'PASS' : 'FAIL'} blow-up recovery: ${recoveries} rollback(s), dt 60 → ${solver.dt.toPrecision(3)}, max |u| = ${peak.toPrecision(3)}${solver.unstable ? ' (gave up)' : ''}`)
+  })
+  // With the protection switched off the same diverging run is not rolled back
+  await section(['recovery', 'swift-hohenberg'], 'protection off', async () => {
+    const solver = solverFor(device, swiftHohenberg, LENGTH)
+    const before = solver.recoveries
+    solver.setBlowupProtection(false) // the default, stated for clarity
+    solver.setParams({ r: 0.2, g: 0 })
+    solver.setDt(60)
+    solver.reset(stripes(2, 0.1))
+    for (let i = 0; i < 12; i++) {
+      const enc = device.createCommandEncoder()
+      solver.step(enc, 4)
+      solver.encodeHealthCheck(enc)
+      device.queue.submit([enc.finish()])
+      await solver.afterSubmit()
+      await device.queue.onSubmittedWorkDone()
+    }
+    const data = await solver.readPhysical()
+    const peak = data.reduce((m, v) => Math.max(m, Math.abs(v)), 0)
+    const pass = solver.recoveries === before && !solver.blowupProtection && !(peak < 5)
+    ok &&= pass
+    log(`${pass ? 'PASS' : 'FAIL'} blow-up protection off: no rollback (${solver.recoveries - before}), the run diverges (max |u| = ${peak.toPrecision(3)})`)
   })
   // Every registered model runs from its own initial state with its defaults and presets
   for (const model of models) {

@@ -144,6 +144,11 @@ export class StateGuard {
     this.discardPending()
   }
 
+  /** Forget the check in flight and the candidate (protection switched off or the state replaced). */
+  discard(): void {
+    this.discardPending()
+  }
+
   /** Counts `steps` solver steps towards the next check. */
   advance(steps: number): void {
     this.stepsSince += steps

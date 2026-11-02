@@ -38,6 +38,7 @@ const colormap = ref(COLORMAPS.some((c) => c.id === stored.global.colormap) ? (s
 const brushSize = ref(3) // percent of the domain length
 const brushStrength = ref(Number.isFinite(stored.global.brushStrength) ? Math.min(Math.max(stored.global.brushStrength!, 0.1), 5) : 0.3)
 const running = ref(true)
+const blowupProtection = ref(true)
 const rangeMode = ref<'auto' | 'manual'>('auto')
 const rangeLo = ref(0)
 const rangeHi = ref(1)
@@ -80,6 +81,7 @@ function applySettings(settings: ModelSettings) {
   adaptive.value = settings.adaptive
   toleranceExp.value = settings.toleranceExp
   brushSize.value = settings.brushSize
+  blowupProtection.value = settings.blowupProtection
   rangeMode.value = settings.rangeMode
   rangeLo.value = settings.rangeLo
   rangeHi.value = settings.rangeHi
@@ -108,6 +110,7 @@ function currentSettings(): ModelSettings {
     adaptive: adaptive.value,
     toleranceExp: toleranceExp.value,
     brushSize: brushSize.value,
+    blowupProtection: blowupProtection.value,
     rangeMode: rangeMode.value,
     rangeLo: rangeLo.value,
     rangeHi: rangeHi.value,
@@ -157,6 +160,7 @@ function build() {
   solver.setParams({ ...params })
   solver.setDt(dt.value)
   solver.setDomain(domain.value)
+  solver.setBlowupProtection(blowupProtection.value)
   applyAdaptive()
   solver.reset()
   renderer = new FieldRenderer(device, canvas.value, solver.physical, grid.nx, grid.ny, solver.real)
@@ -320,8 +324,12 @@ onBeforeUnmount(() => {
 })
 
 watch(gridSize, build)
-watch([params, dt, maxDt, domain, stepsPerFrame, viewIndex, adaptive, toleranceExp, brushSize, brushStrength, colormap, gridSize, rangeMode, rangeLo, rangeHi], persistSoon, { deep: true })
+watch([params, dt, maxDt, domain, stepsPerFrame, viewIndex, adaptive, toleranceExp, brushSize, brushStrength, colormap, gridSize, rangeMode, rangeLo, rangeHi, blowupProtection], persistSoon, { deep: true })
 watch(dt, (v) => solver?.setDt(v))
+watch(blowupProtection, (on) => {
+  solver?.setBlowupProtection(on)
+  notice.value = ''
+})
 watch(domain, (v) => solver?.setDomain(v))
 watch([adaptive, toleranceExp, maxDt], applyAdaptive)
 watch(params, () => solver?.setParams({ ...params }), { deep: true })
@@ -429,6 +437,10 @@ watch(
           <StatsReadout :stats="stats" kind="adaptive" />
         </p>
       </template>
+      <label class="check" title="Check the state for blow-up; if it explodes, go back to the last healthy state and halve dt">
+        <input v-model="blowupProtection" type="checkbox" />
+        <span>blow-up protection (halve dt and roll back)</span>
+      </label>
       <label>
         <span>steps / frame <output>{{ stepsPerFrame }}</output></span>
         <input v-model.number="stepsPerFrame" type="range" min="1" max="20" step="1" />

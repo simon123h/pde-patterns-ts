@@ -102,8 +102,9 @@ export class SpectralSolver {
     commit: GPUComputePipeline
     commitBind: GPUBindGroup
   }
-  /** Watches for blow-up and rolls back; null for models that opt out (`blowupRecovery: false`). */
-  private readonly guard: StateGuard | null
+  /** Watches for blow-up and keeps a snapshot to roll back to (see `setBlowupProtection`). */
+  private readonly guard: StateGuard
+  private protect: boolean
   private recoveryCount = 0
   private consecutiveRecoveries = 0
   private gaveUp = false
@@ -224,7 +225,8 @@ export class SpectralSolver {
       commitBind: bind(commit, [commitUniform, ctl, this.stageState, this.uHat]),
     }
 
-    this.guard = model.blowupRecovery === false ? null : new StateGuard(device, this.uHat, ctl, this.spectralTotal)
+    this.guard = new StateGuard(device, this.uHat, ctl, this.spectralTotal)
+    this.protect = model.blowupRecovery === true
 
     this.paintPipeline = pipeline(paintWgsl)
     this.paintUniform = buffer(48, UNIFORM)
@@ -340,7 +342,7 @@ export class SpectralSolver {
     this.device.queue.writeBuffer(this.physBuffer, 0, upload)
     const enc = this.device.createCommandEncoder()
     this.fft.forward(enc, this.physBuffer, this.uHat)
-    this.guard?.markSnapshot(enc, { h: this.h, t: 0 })
+    this.guard.markSnapshot(enc, { h: this.h, t: 0 })
     this.device.queue.submit([enc.finish()])
     this.cpuTime = 0
     this.consecutiveRecoveries = 0
@@ -404,7 +406,7 @@ export class SpectralSolver {
         this.cpuTime += this.h
       }
     }
-    this.guard?.advance(count)
+    if (this.protect) this.guard.advance(count)
   }
 
   /**
@@ -412,7 +414,30 @@ export class SpectralSolver {
    * has blown up, `afterSubmit` rolls it back to the last healthy snapshot and halves the step size.
    */
   encodeHealthCheck(encoder: GPUCommandEncoder): void {
-    this.guard?.encodeCheck(encoder)
+    if (this.protect) this.guard.encodeCheck(encoder)
+  }
+
+  /** Whether a blow-up is detected and rolled back (default: off, unless the model's `blowupRecovery` is true). */
+  get blowupProtection(): boolean {
+    return this.protect
+  }
+
+  /**
+   * Switch the blow-up protection on or off. Switching it on makes the current state the snapshot to roll
+   * back to; switching it off drops the check in flight and the give-up state.
+   */
+  setBlowupProtection(on: boolean): void {
+    if (on === this.protect) return
+    this.protect = on
+    this.gaveUp = false
+    this.consecutiveRecoveries = 0
+    if (on) {
+      const enc = this.device.createCommandEncoder()
+      this.guard.markSnapshot(enc, { h: this.h, t: this.time })
+      this.device.queue.submit([enc.finish()])
+    } else {
+      this.guard.discard()
+    }
   }
 
   /** Number of times the state exploded and was rolled back with a smaller step size. */
@@ -434,11 +459,12 @@ export class SpectralSolver {
 
   /** Call right after submitting the encoder passed to `encodeStatsCopy`. */
   afterSubmit(): Promise<void> {
-    const health =
-      this.guard?.afterSubmit(this.cpuTime, this.h, this.adaptive.enabled).then((verdict) => {
-        if (verdict === 'exploded') this.recover()
-        else if (verdict === 'healthy') this.consecutiveRecoveries = 0
-      }) ?? Promise.resolve()
+    const health = this.protect
+      ? this.guard.afterSubmit(this.cpuTime, this.h, this.adaptive.enabled).then((verdict) => {
+          if (verdict === 'exploded' && this.protect) this.recover()
+          else if (verdict === 'healthy') this.consecutiveRecoveries = 0
+        })
+      : Promise.resolve()
     if (!this.statsPending) return health
     this.statsPending = false
     this.statsMapping = true
@@ -457,7 +483,6 @@ export class SpectralSolver {
 
   /** Roll the state back to the last healthy snapshot and continue with half the step size. */
   private recover(): void {
-    if (!this.guard) return
     this.recoveryCount++
     this.consecutiveRecoveries++
     const snapshot = this.guard.snapshotState
@@ -522,7 +547,7 @@ export class SpectralSolver {
 
   destroy(): void {
     this.fft.destroy()
-    this.guard?.destroy()
+    this.guard.destroy()
     for (const b of this.owned) b.destroy()
   }
 
