@@ -43,3 +43,10 @@ describe.each(['kuramoto-sivashinsky', 'nikolaevskiy'])('%s mean', (id) => {
     expect(symbols[4 * 16 + 2]).toBe(1) // and of the next mode, so only k = 0 is affected
   })
 })
+
+describe('blow-up recovery opt-out', () => {
+  it('is off for the equations that blow up independently of dt, on for the rest', () => {
+    const off = models.filter((m) => m.blowupRecovery === false).map((m) => m.id).sort()
+    expect(off).toEqual(['kuramoto-sivashinsky', 'nikolaevskiy'])
+  })
+})
