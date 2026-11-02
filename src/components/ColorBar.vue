@@ -37,7 +37,8 @@ const labels = computed(() => {
 </template>
 
 <style scoped>
-.colorbar { display: flex; gap: 6px; height: min(60vh, 420px); font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted); }
-.bar { width: 14px; border-radius: 3px; border: 1px solid #333a4d; }
-.ticks { display: flex; flex-direction: column; justify-content: space-between; min-width: 40px; }
+.colorbar { flex: none; display: flex; gap: 6px; height: min(60vh, 420px); font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted); }
+.bar { flex: none; width: 14px; border-radius: 3px; border: 1px solid #333a4d; }
+/* a fixed width, so that labels with more or fewer digits do not move the bar and the field next to it */
+.ticks { flex: none; display: flex; flex-direction: column; justify-content: space-between; width: 8ch; overflow: hidden; white-space: nowrap; }
 </style>
