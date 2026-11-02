@@ -15,6 +15,10 @@ export interface ModelSettings {
   toleranceExp: number
   /** Brush radius in percent of the domain length. */
   brushSize: number
+  /** Color range: fitted to the field (`auto`) or fixed to [rangeLo, rangeHi]. */
+  rangeMode: 'auto' | 'manual'
+  rangeLo: number
+  rangeHi: number
 }
 
 /** Settings shared by all equations. */
@@ -45,6 +49,9 @@ export function defaultModelSettings(model: SpectralModel): ModelSettings {
     adaptive: false,
     toleranceExp: -3,
     brushSize: (model.paint?.sigma ?? 0.03) * 100,
+    rangeMode: 'auto',
+    rangeLo: 0,
+    rangeHi: 1,
   }
 }
 
@@ -77,6 +84,11 @@ export function sanitizeModelSettings(model: SpectralModel, raw: unknown): Model
   number('brushSize', 0.5, 15)
   if (finite(stored.viewIndex) && Number.isInteger(stored.viewIndex)) settings.viewIndex = clamp(stored.viewIndex, 0, model.views.length - 1)
   if (typeof stored.adaptive === 'boolean') settings.adaptive = stored.adaptive
+  if (stored.rangeMode === 'auto' || stored.rangeMode === 'manual') settings.rangeMode = stored.rangeMode
+  if (finite(stored.rangeLo) && finite(stored.rangeHi) && stored.rangeLo < stored.rangeHi) {
+    settings.rangeLo = stored.rangeLo
+    settings.rangeHi = stored.rangeHi
+  }
   return settings
 }
 

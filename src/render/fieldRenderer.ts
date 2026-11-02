@@ -20,7 +20,9 @@ export class FieldRenderer {
   private readonly paletteBuffer: GPUBuffer
   private readonly rangeBind: GPUBindGroup
   private readonly renderBind: GPUBindGroup
+  private readonly rangeStaging: GPUBuffer
   private first = true
+  private reading = false
 
   constructor(
     private readonly device: GPUDevice,
@@ -48,7 +50,8 @@ export class FieldRenderer {
 
     this.rangeParams = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     this.renderParams = device.createBuffer({ size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
-    this.rangeBuffer = device.createBuffer({ size: 8, usage: GPUBufferUsage.STORAGE })
+    this.rangeBuffer = device.createBuffer({ size: 8, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC })
+    this.rangeStaging = device.createBuffer({ size: 8, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ })
     const table = buildPaletteTable()
     this.paletteBuffer = device.createBuffer({ size: table.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST })
     device.queue.writeBuffer(this.paletteBuffer, 0, table)
@@ -79,8 +82,34 @@ export class FieldRenderer {
     this.first = true
   }
 
-  /** Encode range detection and drawing of one component of field `fieldIndex` into the canvas. */
-  render(encoder: GPUCommandEncoder, fieldIndex: number, kind: ViewKind, colormap: string): void {
+  /**
+   * Reads the automatic color range (the smoothed minimum and maximum of the field) back from the GPU,
+   * for a color bar. Resolves to null while a previous read is still pending.
+   */
+  async readRange(): Promise<{ lo: number; hi: number } | null> {
+    if (this.reading) return null
+    this.reading = true
+    try {
+      const encoder = this.device.createCommandEncoder()
+      encoder.copyBufferToBuffer(this.rangeBuffer, 0, this.rangeStaging, 0, 8)
+      this.device.queue.submit([encoder.finish()])
+      await this.rangeStaging.mapAsync(GPUMapMode.READ)
+      const [lo, hi] = new Float32Array(this.rangeStaging.getMappedRange().slice(0))
+      this.rangeStaging.unmap()
+      return { lo: lo!, hi: hi! }
+    } catch {
+      return null
+    } finally {
+      this.reading = false
+    }
+  }
+
+  /**
+   * Encode range detection and drawing of one component of field `fieldIndex` into the canvas.
+   * `limits` fixes the color range instead of fitting it to the field (diverging maps stay centered on zero
+   * and phases always span ±π, see `displayRange`).
+   */
+  render(encoder: GPUCommandEncoder, fieldIndex: number, kind: ViewKind, colormap: string, limits: { lo: number; hi: number } | null = null): void {
     const mapIndex = Math.max(0, COLORMAPS.findIndex((m) => m.id === colormap))
     const cells = this.nx * this.ny
     const offset = fieldIndex * cells
@@ -107,6 +136,9 @@ export class FieldRenderer {
     up.setUint32(24, KIND_ID[kind], true)
     up.setUint32(28, COLORMAPS[mapIndex]!.diverging ? 1 : 0, true)
     up.setUint32(32, this.real ? 1 : 0, true)
+    up.setUint32(36, limits ? 1 : 0, true)
+    up.setFloat32(40, limits?.lo ?? 0, true)
+    up.setFloat32(44, limits?.hi ?? 0, true)
     this.device.queue.writeBuffer(this.renderParams, 0, up.buffer)
 
     const compute = encoder.beginComputePass()
@@ -133,6 +165,6 @@ export class FieldRenderer {
 
   destroy(): void {
     this.context?.unconfigure()
-    for (const b of [this.rangeParams, this.renderParams, this.rangeBuffer, this.paletteBuffer]) b.destroy()
+    for (const b of [this.rangeParams, this.renderParams, this.rangeBuffer, this.rangeStaging, this.paletteBuffer]) b.destroy()
   }
 }

@@ -7,6 +7,7 @@ import { COLORMAPS } from '../render/colormaps'
 import { FieldRenderer } from '../render/fieldRenderer'
 import { MAX_STAMPS, SpectralSolver } from '../solver/spectralSolver'
 import { defaultModelSettings, loadSettings, sanitizeModelSettings, saveSettings, type ModelSettings } from '../settings'
+import ColorBar from './ColorBar.vue'
 import StatsReadout from './StatsReadout.vue'
 
 const GRID_SIZES = [64, 128, 256, 512, 1024]
@@ -37,6 +38,11 @@ const colormap = ref(COLORMAPS.some((c) => c.id === stored.global.colormap) ? (s
 const brushSize = ref(3) // percent of the domain length
 const brushStrength = ref(Number.isFinite(stored.global.brushStrength) ? Math.min(Math.max(stored.global.brushStrength!, 0.1), 5) : 0.3)
 const running = ref(true)
+const rangeMode = ref<'auto' | 'manual'>('auto')
+const rangeLo = ref(0)
+const rangeHi = ref(1)
+// the automatic color range as last read back from the GPU; only <ColorBar> reads it
+const autoRange = reactive({ lo: 0, hi: 1 })
 const params = reactive<Record<string, number>>({})
 const stats = reactive({ fps: 0, time: 0, dt: 0, accepted: 0, rejected: 0, recoveries: 0 })
 const notice = ref('')
@@ -50,6 +56,8 @@ let liveRejected = 0
 let liveRecoveries = 0
 let seenRecoveries = 0
 let statsTimer = 0
+let framesSinceRange = 0
+let liveRange = { lo: 0, hi: 1 }
 
 let device: GPUDevice | null = null
 let solver: SpectralSolver | null = null
@@ -72,6 +80,9 @@ function applySettings(settings: ModelSettings) {
   adaptive.value = settings.adaptive
   toleranceExp.value = settings.toleranceExp
   brushSize.value = settings.brushSize
+  rangeMode.value = settings.rangeMode
+  rangeLo.value = settings.rangeLo
+  rangeHi.value = settings.rangeHi
 }
 
 /** The stored settings of the current model (the defaults for values that were never stored). */
@@ -97,6 +108,9 @@ function currentSettings(): ModelSettings {
     adaptive: adaptive.value,
     toleranceExp: toleranceExp.value,
     brushSize: brushSize.value,
+    rangeMode: rangeMode.value,
+    rangeLo: rangeLo.value,
+    rangeHi: rangeHi.value,
   }
 }
 
@@ -155,6 +169,19 @@ function applyAdaptive() {
     hmax: maxDt.value,
     hmin: model.value.dt.min * 0.01,
   })
+}
+
+/** Fixed color limits, or null while the range follows the field. */
+function manualLimits() {
+  return rangeMode.value === 'manual' && rangeLo.value < rangeHi.value ? { lo: rangeLo.value, hi: rangeHi.value } : null
+}
+
+/** Fix the color range at the current automatic one. */
+function fixRange() {
+  rangeLo.value = Number(liveRange.lo.toPrecision(3))
+  rangeHi.value = Number(liveRange.hi.toPrecision(3))
+  if (!(rangeLo.value < rangeHi.value)) rangeHi.value = rangeLo.value + 1
+  rangeMode.value = 'manual'
 }
 
 function resetSimulation() {
@@ -225,7 +252,7 @@ function frame(now: number) {
   if (running.value) solver.step(enc, stepsPerFrame.value)
   solver.encodeView(enc)
   const view = model.value.views[viewIndex.value] ?? model.value.views[0]!
-  renderer.render(enc, view.field, view.kind, colormap.value)
+  renderer.render(enc, view.field, view.kind, colormap.value, manualLimits())
   solver.encodeHealthCheck(enc)
   solver.encodeStatsCopy(enc)
   device.queue.submit([enc.finish()])
@@ -235,6 +262,15 @@ function frame(now: number) {
 
   if (lastFrame) liveFps = liveFps * 0.9 + (1000 / (now - lastFrame)) * 0.1
   lastFrame = now
+  if (++framesSinceRange >= 15) {
+    framesSinceRange = 0
+    void renderer.readRange().then((r) => {
+      if (!r) return
+      liveRange = r
+      autoRange.lo = r.lo
+      autoRange.hi = r.hi
+    })
+  }
   liveTime = solver.time
   liveDt = solver.dt
   liveAccepted = solver.stats.accepted
@@ -284,7 +320,7 @@ onBeforeUnmount(() => {
 })
 
 watch(gridSize, build)
-watch([params, dt, maxDt, domain, stepsPerFrame, viewIndex, adaptive, toleranceExp, brushSize, brushStrength, colormap, gridSize], persistSoon, { deep: true })
+watch([params, dt, maxDt, domain, stepsPerFrame, viewIndex, adaptive, toleranceExp, brushSize, brushStrength, colormap, gridSize, rangeMode, rangeLo, rangeHi], persistSoon, { deep: true })
 watch(dt, (v) => solver?.setDt(v))
 watch(domain, (v) => solver?.setDomain(v))
 watch([adaptive, toleranceExp, maxDt], applyAdaptive)
@@ -298,20 +334,8 @@ watch(
 
 <template>
   <div class="layout">
-    <div class="stage"><canvas
-        ref="canvas"
-        class="view"
-        @pointerdown.prevent="onPointerDown"
-        @pointermove="onPointerMove"
-        @pointerup="onPointerUp"
-        @pointercancel="onPointerUp"
-        @contextmenu.prevent
-      /></div>
-    <aside class="panel">
+    <aside class="panel model-panel">
       <h1>PDE Patterns</h1>
-      <p v-if="error" class="error">{{ error }}</p>
-      <p v-else-if="notice" class="error">{{ notice }}</p>
-      <p v-else class="muted"><StatsReadout :stats="stats" kind="summary" :adapter="adapterLabel" /></p>
 
       <label>
         <span>equation</span>
@@ -340,11 +364,50 @@ watch(
         <input v-model.number="params[p.key]" type="range" :min="p.min" :max="p.max" :step="p.step" />
       </label>
 
-      <h2>Domain &amp; numerics</h2>
+      <h2>Domain</h2>
       <label>
-        <span>domain size L <output>{{ domain.toFixed(model.domain.step < 1 ? 1 : 0) }}</output></span>
+        <span>size L <output>{{ domain.toFixed(model.domain.step < 1 ? 1 : 0) }}</output></span>
         <input v-model.number="domain" type="range" :min="model.domain.min" :max="model.domain.max" :step="model.domain.step" />
       </label>
+      <label>
+        <span>grid points <output>dx = {{ (domain / gridSize).toPrecision(3) }}</output></span>
+        <select v-model.number="gridSize">
+          <option v-for="n in GRID_SIZES" :key="n" :value="n">{{ n }} × {{ n }}</option>
+        </select>
+      </label>
+
+      <div class="buttons end">
+        <button title="Forget the saved settings of this equation and use its defaults" @click="resetToDefaults">Reset to defaults</button>
+      </div>
+    </aside>
+
+    <div class="stage">
+      <div class="field"><canvas
+          ref="canvas"
+          class="view"
+          @pointerdown.prevent="onPointerDown"
+          @pointermove="onPointerMove"
+          @pointerup="onPointerUp"
+          @pointercancel="onPointerUp"
+          @contextmenu.prevent
+        /></div>
+      <ColorBar
+        :colormap="colormap"
+        :kind="(model.views[viewIndex] ?? model.views[0]!).kind"
+        :auto="autoRange"
+        :manual="manualLimits()"
+      />
+    </div>
+
+    <aside class="panel sim-panel">
+      <p v-if="error" class="error">{{ error }}</p>
+      <p v-else class="muted"><StatsReadout :stats="stats" kind="summary" :adapter="adapterLabel" /></p>
+      <div class="buttons">
+        <button @click="running = !running">{{ running ? 'Pause' : 'Run' }}</button>
+        <button @click="resetSimulation">Reset</button>
+      </div>
+
+      <h2>Time stepping</h2>
       <label>
         <span>dt <output>{{ dt.toFixed(2) }}</output></span>
         <input v-model.number="dt" type="range" :min="model.dt.min" :max="model.dt.max" :step="model.dt.step" />
@@ -370,13 +433,8 @@ watch(
         <span>steps / frame <output>{{ stepsPerFrame }}</output></span>
         <input v-model.number="stepsPerFrame" type="range" min="1" max="20" step="1" />
       </label>
-      <label>
-        <span>grid</span>
-        <select v-model.number="gridSize">
-          <option v-for="n in GRID_SIZES" :key="n" :value="n">{{ n }} × {{ n }}</option>
-        </select>
-        <small class="muted">dx = {{ (domain / gridSize).toPrecision(3) }}</small>
-      </label>
+
+      <h2>Display</h2>
       <label v-if="model.views.length > 1">
         <span>view</span>
         <select v-model.number="viewIndex">
@@ -389,6 +447,21 @@ watch(
           <option v-for="c in COLORMAPS" :key="c.id" :value="c.id">{{ c.label }}</option>
         </select>
       </label>
+      <label>
+        <span>color range</span>
+        <select v-model="rangeMode">
+          <option value="auto">automatic (fits the field)</option>
+          <option value="manual">fixed</option>
+        </select>
+      </label>
+      <div v-if="rangeMode === 'manual'" class="range-inputs">
+        <input v-model.number="rangeLo" type="number" step="any" aria-label="lower limit" />
+        <span>to</span>
+        <input v-model.number="rangeHi" type="number" step="any" aria-label="upper limit" />
+      </div>
+      <div class="buttons">
+        <button title="Fix the color range at the current automatic range" @click="fixRange">Fix current range</button>
+      </div>
 
       <h2>Brush</h2>
       <label>
@@ -400,21 +473,25 @@ watch(
         <input v-model.number="brushStrength" type="range" min="0.1" max="5" step="0.1" />
       </label>
       <p class="muted desc">Drag on the field: left button adds, right button subtracts.</p>
-
-      <div class="buttons">
-        <button @click="running = !running">{{ running ? 'Pause' : 'Run' }}</button>
-        <button @click="resetSimulation">Reset</button>
-        <button title="Forget the saved settings of this equation and use its defaults" @click="resetToDefaults">Reset to defaults</button>
-      </div>
     </aside>
   </div>
 </template>
 
 <style scoped>
-.layout { display: flex; height: 100vh; }
-.stage { flex: 1; min-width: 0; display: grid; place-items: center; background: #000; }
+.layout { display: grid; grid-template-columns: 280px minmax(0, 1fr) 280px; height: 100vh; }
+.stage { min-width: 0; display: flex; align-items: center; justify-content: center; gap: 10px; padding-right: 10px; background: #000; }
+.field { flex: 1; min-width: 0; display: grid; place-items: center; }
 .view { width: min(100%, 100vh); aspect-ratio: 1; cursor: crosshair; touch-action: none; }
-.panel { width: 280px; padding: 16px; background: var(--panel); overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.range-inputs { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+.range-inputs input { flex: 1; min-width: 0; background: #232734; color: var(--fg); border: 1px solid #333a4d; border-radius: 6px; padding: 6px 8px; }
+.panel { padding: 16px; background: var(--panel); overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+@media (max-width: 960px) {
+  /* narrow screens: the field on top, the two panels below */
+  .layout { grid-template-columns: 1fr; grid-template-rows: auto auto auto; height: auto; }
+  .stage { order: -1; }
+  .view { width: min(100%, 100vw); }
+  .panel { overflow-y: visible; }
+}
 h1 { font-size: 18px; margin: 0; }
 h2 { font-size: 13px; margin: 12px 0 0; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
 label { display: flex; flex-direction: column; gap: 4px; }
@@ -424,7 +501,8 @@ output { color: var(--muted); font-variant-numeric: tabular-nums; }
 select, button { background: #232734; color: var(--fg); border: 1px solid #333a4d; border-radius: 6px; padding: 6px 10px; }
 button { cursor: pointer; flex: 1; }
 button:hover { border-color: var(--accent); }
-.buttons { display: flex; gap: 8px; margin-top: 8px; }
+.buttons { display: flex; gap: 8px; }
+.buttons.end { margin-top: auto; padding-top: 8px; }
 .muted { color: var(--muted); margin: 0; }
 .desc { font-size: 12px; }
 .error { color: #ff7b7b; margin: 0; }
