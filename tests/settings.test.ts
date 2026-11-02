@@ -53,6 +53,20 @@ describe('color range settings', () => {
   })
 })
 
+describe('blow-up protection setting', () => {
+  const byId = (id: string) => models.find((m) => m.id === id)!
+  it('starts on, except for the equations that opt out', () => {
+    expect(defaultModelSettings(byId('swift-hohenberg')).blowupProtection).toBe(true)
+    expect(defaultModelSettings(byId('kuramoto-sivashinsky')).blowupProtection).toBe(false)
+    expect(defaultModelSettings(byId('nikolaevskiy')).blowupProtection).toBe(false)
+  })
+  it('can be switched either way and ignores other types', () => {
+    expect(sanitizeModelSettings(byId('nikolaevskiy'), { blowupProtection: true }).blowupProtection).toBe(true)
+    expect(sanitizeModelSettings(byId('swift-hohenberg'), { blowupProtection: false }).blowupProtection).toBe(false)
+    expect(sanitizeModelSettings(byId('swift-hohenberg'), { blowupProtection: 'no' }).blowupProtection).toBe(true)
+  })
+})
+
 describe('stored settings', () => {
   it('round-trips', () => {
     const storage = fakeStorage()
