@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { ViewKind } from '../models/types'
-import { COLORMAPS, gradientCss } from '../render/colormaps'
+import { gradientCss } from '../render/colormaps'
 import { displayRange, formatTick, type Range } from '../render/range'
 
 // Only this component reads the (frequently updated) automatic range, so that the panels around it
@@ -17,8 +17,7 @@ const props = defineProps<{
 
 const cyclic = computed(() => props.kind === 'arg')
 const limits = computed(() => {
-  const diverging = COLORMAPS.find((c) => c.id === props.colormap)?.diverging ?? false
-  return displayRange(props.manual ?? props.auto, props.kind, diverging)
+  return displayRange(props.manual ?? props.auto, props.kind)
 })
 const labels = computed(() => {
   if (cyclic.value) return ['π', '0', '−π']

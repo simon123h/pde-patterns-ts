@@ -84,10 +84,10 @@ export async function runRenderSelfTest(log: (line: string) => void): Promise<bo
   expect('blue-white-red middle', px, 31, [247, 247, 247], 14)
   expect('blue-white-red high', px, N - 1, [103, 0, 31])
 
-  // all-positive data on a diverging map: zero must stay white, so the range is [−max, max]
+  // all-positive data on rdbu: limits are independent [0, 1], so value 0 is at the low end (blue)
   px = await renderPixels(device, ramp((x) => x / (N - 1)), 're', 'rdbu')
-  expect('diverging centered on zero (value 0)', px, 0, [247, 247, 247])
-  expect('diverging centered on zero (max)', px, N - 1, [103, 0, 31])
+  expect('rdbu independent limits (value 0 is low)', px, 0, [5, 48, 97])
+  expect('rdbu independent limits (value 1 is high)', px, N - 1, [103, 0, 31])
 
   // fixed limits: the ramp 0…1 on the range [0, 2] only reaches the middle of the colormap
   px = await renderPixels(device, ramp((x) => x / (N - 1)), 're', 'viridis', false, { lo: 0, hi: 2 })

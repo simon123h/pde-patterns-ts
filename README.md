@@ -60,7 +60,7 @@ ranges). *Reset to defaults* forgets the saved settings of the current equation.
 tolerance (10⁻⁶ … 10⁻¹) up to a maximum dt; the dt slider then sets the starting value, and the
 panel shows the current dt and the accepted/rejected step counts. This pays off for Cahn–Hilliard
 coarsening, where dt grows by orders of magnitude. Complex fields offer several views (|A|, Re A, arg A); several ColorBrewer and
-perceptual colormaps are available, and the diverging ones are centered on zero.
+perceptual colormaps are available.
 
 ### In-browser self-tests
 
@@ -71,7 +71,7 @@ lines and ends with `ALL PASSED`:
 |---|---|
 | `/fft-test.html` | complex and real-to-complex GPU FFTs against the f64 CPU reference (incl. batching) plus timings |
 | `/solver-test.html` | linear growth/decay rates, conservation laws, saturation amplitude, the brush, adaptive stepping and GPU-vs-CPU coefficients (`?only=<group>` runs one group: a model id, `coef`, `adaptive`, `models`; each section logs its time) |
-| `/render-test.html` | colormaps, diverging centering and phase view rendered offscreen |
+| `/render-test.html` | colormaps, color ranges and phase view rendered offscreen |
 
 ## Numerics
 

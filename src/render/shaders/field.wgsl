@@ -8,7 +8,7 @@ struct Params {
   width: f32,
   height: f32,
   kind: u32, // 0 Re, 1 Im, 2 |.|, 3 arg
-  diverging: u32, // 1: symmetric range centered on zero
+  unused: u32,
   real: u32, // 1: field is plain f32 instead of interleaved complex
   manual: u32, // 1: use lo/hi instead of the automatic range
   lo: f32,
@@ -82,11 +82,6 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
   if (p.kind == 3u) {
     lo = -3.14159265;
     hi = 3.14159265;
-  }
-  if (p.diverging == 1u) {
-    let m = max(abs(lo), abs(hi));
-    lo = -m;
-    hi = m;
   }
   let t = clamp((v - lo) / max(hi - lo, 1e-6), 0.0, 1.0);
   var color = lookup(p.colormap, t);

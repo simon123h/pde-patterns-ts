@@ -7,14 +7,10 @@ export interface Range {
 
 /**
  * The limits the colors are actually mapped to, the same rule as in the render shader: phases always
- * span ±π, and diverging colormaps are centered on zero (range ±max(|lo|, |hi|)).
+ * span ±π, and all other views map linearly between lo and hi.
  */
-export function displayRange(range: Range, kind: ViewKind, diverging: boolean): Range {
+export function displayRange(range: Range, kind: ViewKind): Range {
   if (kind === 'arg') return { lo: -Math.PI, hi: Math.PI }
-  if (diverging) {
-    const m = Math.max(Math.abs(range.lo), Math.abs(range.hi))
-    return { lo: -m, hi: m }
-  }
   return { ...range }
 }
 

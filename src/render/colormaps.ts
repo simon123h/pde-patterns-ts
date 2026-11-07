@@ -3,8 +3,6 @@ export type RGB = [number, number, number]
 export interface ColormapSpec {
   id: string
   label: string
-  /** Diverging maps are centered on zero: the color range becomes symmetric, ±max|u|. */
-  diverging: boolean
   /** Control points from t = 0 to t = 1, linearly interpolated in sRGB (0–255). */
   stops: RGB[]
 }
@@ -101,13 +99,13 @@ function viridisStops(count = 32): RGB[] {
 }
 
 export const COLORMAPS: ColormapSpec[] = [
-  { id: 'viridis', label: 'viridis', diverging: false, stops: viridisStops() },
-  { id: 'inferno', label: 'inferno', diverging: false, stops: INFERNO },
-  { id: 'ylgnbu', label: 'YlGnBu (Brewer)', diverging: false, stops: YL_GN_BU },
-  { id: 'gray', label: 'gray', diverging: false, stops: [[0, 0, 0], [255, 255, 255]] },
-  { id: 'rdbu', label: 'blue–white–red (Brewer RdBu)', diverging: true, stops: RD_BU_REVERSED },
-  { id: 'prgn', label: 'purple–white–green (Brewer PRGn)', diverging: true, stops: PRGN },
-  { id: 'spectral', label: 'Spectral (Brewer, reversed)', diverging: false, stops: SPECTRAL_REVERSED },
+  { id: 'viridis', label: 'viridis', stops: viridisStops() },
+  { id: 'inferno', label: 'inferno', stops: INFERNO },
+  { id: 'ylgnbu', label: 'YlGnBu (Brewer)', stops: YL_GN_BU },
+  { id: 'gray', label: 'gray', stops: [[0, 0, 0], [255, 255, 255]] },
+  { id: 'rdbu', label: 'blue–white–red (Brewer RdBu)', stops: RD_BU_REVERSED },
+  { id: 'prgn', label: 'purple–white–green (Brewer PRGn)', stops: PRGN },
+  { id: 'spectral', label: 'Spectral (Brewer, reversed)', stops: SPECTRAL_REVERSED },
 ]
 
 export const PALETTE_SIZE = 256

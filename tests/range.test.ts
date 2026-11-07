@@ -3,15 +3,12 @@ import { COLORMAPS, gradientCss } from '../src/render/colormaps'
 import { displayRange, formatTick } from '../src/render/range'
 
 describe('displayRange', () => {
-  it('keeps the range for sequential maps', () => {
-    expect(displayRange({ lo: -1, hi: 3 }, 're', false)).toEqual({ lo: -1, hi: 3 })
-  })
-  it('centers diverging maps on zero', () => {
-    expect(displayRange({ lo: -1, hi: 3 }, 're', true)).toEqual({ lo: -3, hi: 3 })
-    expect(displayRange({ lo: 0.5, hi: 2 }, 'abs', true)).toEqual({ lo: -2, hi: 2 })
+  it('keeps the range for any colormap', () => {
+    expect(displayRange({ lo: -1, hi: 3 }, 're')).toEqual({ lo: -1, hi: 3 })
+    expect(displayRange({ lo: 0.5, hi: 2 }, 'abs')).toEqual({ lo: 0.5, hi: 2 })
   })
   it('always spans ±π for phases', () => {
-    expect(displayRange({ lo: 0, hi: 1 }, 'arg', true)).toEqual({ lo: -Math.PI, hi: Math.PI })
+    expect(displayRange({ lo: 0, hi: 1 }, 'arg')).toEqual({ lo: -Math.PI, hi: Math.PI })
   })
 })
 

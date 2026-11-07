@@ -106,8 +106,7 @@ export class FieldRenderer {
 
   /**
    * Encode range detection and drawing of one component of field `fieldIndex` into the canvas.
-   * `limits` fixes the color range instead of fitting it to the field (diverging maps stay centered on zero
-   * and phases always span ±π, see `displayRange`).
+   * `limits` fixes the color range instead of fitting it to the field (phases always span ±π, see `displayRange`).
    */
   render(encoder: GPUCommandEncoder, fieldIndex: number, kind: ViewKind, colormap: string, limits: { lo: number; hi: number } | null = null): void {
     const mapIndex = Math.max(0, COLORMAPS.findIndex((m) => m.id === colormap))
@@ -134,7 +133,7 @@ export class FieldRenderer {
     up.setFloat32(16, this.width(), true)
     up.setFloat32(20, this.height(), true)
     up.setUint32(24, KIND_ID[kind], true)
-    up.setUint32(28, COLORMAPS[mapIndex]!.diverging ? 1 : 0, true)
+    up.setUint32(28, 0, true)
     up.setUint32(32, this.real ? 1 : 0, true)
     up.setUint32(36, limits ? 1 : 0, true)
     up.setFloat32(40, limits?.lo ?? 0, true)
